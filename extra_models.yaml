@@ -1,0 +1,31 @@
+krita:
+  base_path: C:/Users/Aswanth Vijay/AppData/Roaming/krita/ai_diffusion/server/models
+  checkpoints: checkpoints
+  clip_vision: clip_vision
+  controlnet: controlnet
+  diffusion_models: diffusion_models
+  embeddings: embeddings
+  inpaint: inpaint
+  ipadapter: ipadapter
+  loras: loras
+  model_patches: model_patches
+  style_models: style_models
+  text_encoders: text_encoders
+  upscale_models: upscale_models
+  vae: vae
+
+stabilitymatrix:
+  base_path: D:/Image AI/StabilityMatrix-win-x64/Data/Models
+  checkpoints: StableDiffusion
+  clip_vision: ClipVision
+  diffusion_models: DiffusionModels
+  inpaint: Inpaint
+  ipadapter: IpAdapter
+  loras: Lora
+  text_encoders: TextEncoders
+  upscale_models: ESRGAN
+  vae: VAE
+
+facestudio:
+  base_path: D:/face_studio/models
+  loras: loras

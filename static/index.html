@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Face Studio AI — Ultra-Realistic Portrait, Outfit & Enhancement Suite</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="glow-bg top-left"></div>
+  <div class="glow-bg bottom-right"></div>
+
+  <div class="studio-wrapper">
+    <!-- Top Header -->
+    <header class="studio-header">
+      <div class="brand">
+        <div class="brand-logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83" />
+            <circle cx="12" cy="12" r="4" fill="currentColor" fill-opacity="0.3"/>
+          </svg>
+        </div>
+        <div class="brand-meta">
+          <h1>Face Studio AI</h1>
+          <p>Universal Melanin Sync &bull; Photovance Suite &bull; Port 7870</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <div class="status-pill ready" id="statusPill">
+          <span class="status-dot"></span>
+          <span id="statusText">GPU Engine Active</span>
+        </div>
+        <a href="/privacy" target="_blank" class="privacy-link">Privacy Policy</a>
+      </div>
+    </header>
+
+    <!-- Top Navigation Tabs (6 Dedicated Studio Tools) -->
+    <nav class="studio-nav glass-card">
+      <button class="nav-tab active" data-tab="panel-outfit">
+        <span class="nav-tab-icon">👗</span>
+        <span class="nav-tab-text">Outfit Studio</span>
+      </button>
+      <button class="nav-tab" data-tab="panel-restore">
+        <span class="nav-tab-icon">🪄</span>
+        <span class="nav-tab-text">Photo Restoration</span>
+      </button>
+      <button class="nav-tab" data-tab="panel-rembg">
+        <span class="nav-tab-icon">✂️</span>
+        <span class="nav-tab-text">Background Remover</span>
+      </button>
+      <button class="nav-tab" data-tab="panel-eraser">
+        <span class="nav-tab-icon">🧹</span>
+        <span class="nav-tab-text">Magic Object Eraser</span>
+      </button>
+      <button class="nav-tab" data-tab="panel-upscale">
+        <span class="nav-tab-icon">🔍</span>
+        <span class="nav-tab-text">4K Ultra-Upscaler</span>
+      </button>
+      <button class="nav-tab" data-tab="panel-deblur">
+        <span class="nav-tab-icon">⚡</span>
+        <span class="nav-tab-text">Deblur & Sharpener</span>
+      </button>
+    </nav>
+
+    <!-- Main Workspace -->
+    <main class="studio-grid">
+      <!-- Left Column: Dynamic Panels -->
+      <section class="control-panel glass-card">
+
+        <!-- ========================================================= -->
+        <!-- TAB 1: OUTFIT & WARDROBE STUDIO                           -->
+        <!-- ========================================================= -->
+        <div class="tab-panel active" id="panel-outfit">
+          <!-- Dual Mode Switcher -->
+          <div class="control-section">
+            <label class="section-label">Generation Mode</label>
+            <div class="mode-tabs">
+              <button class="mode-tab active" data-mode="in_place_swap" id="modeInPlace">
+                <span class="tab-icon">👗</span>
+                <span class="tab-text">
+                  <strong>In-Place Outfit Swap</strong>
+                  <small>Klein Flux 2; 100% original face & body</small>
+                </span>
+              </button>
+              <button class="mode-tab" data-mode="full_scene" id="modeFullScene">
+                <span class="tab-icon">✨</span>
+                <span class="tab-text">
+                  <strong>Full Scene Generation</strong>
+                  <small>New background with 1:1 facial lock</small>
+                </span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Reference Photo Upload -->
+          <div class="control-section">
+            <label class="section-label">1. Reference Photo</label>
+            <div class="upload-dropzone" id="dropzone">
+              <input type="file" id="fileInput" accept="image/png,image/jpeg,image/webp" hidden>
+              <div class="dropzone-content" id="dropzoneContent">
+                <div class="upload-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+                  </svg>
+                </div>
+                <p class="upload-title">Drop your portrait here or <span>Browse</span></p>
+                <p class="upload-hint">Supports high-res JPG, PNG, WEBP &bull; Max 50MB</p>
+                <button type="button" class="sample-btn" id="loadSampleBtn">Use Studio Sample</button>
+              </div>
+              <div class="upload-preview-container hidden" id="uploadPreviewContainer">
+                <img id="uploadPreviewImg" alt="Reference Preview">
+                <div class="preview-overlay-tag" id="previewOverlayTag">Segformer Mask Ready</div>
+                <button type="button" class="remove-upload-btn" id="removeUploadBtn">&times;</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Multi-Model Selector -->
+          <div class="control-section">
+            <label class="section-label" for="modelSelect">2. Diffusion Engine</label>
+            <div class="custom-select-wrapper">
+              <select id="modelSelect" class="studio-select">
+                <option value="cyberrealistic_xl" selected>CyberRealistic XL (DSLR Pores & Natural Skin) ★ King</option>
+                <option value="realvis_xl">RealVisXL V5.0 (Studio Portrait Benchmark)</option>
+                <option value="flux_klein">Flux-2-Klein 4B Turbo (Wardrobe Master DiT) ★</option>
+              </select>
+            </div>
+            <p class="field-hint" id="modelDesc">True DSLR micro-pores, natural epidermal depth, zero AI plastic smoothing.</p>
+          </div>
+
+          <!-- MOSS Typography & Custom Slogan Mod -->
+          <div class="control-section" id="sloganSection">
+            <div class="section-label-row">
+              <label class="section-label" for="sloganInput">Text Slogan / Typography (MOSS-Image)</label>
+              <span class="lora-badge" style="background: rgba(168, 85, 247, 0.2); color: #c084fc;">Bilingual Vector Text</span>
+            </div>
+            <div class="custom-input-wrapper" style="margin-top: 6px;">
+              <input type="text" id="sloganInput" class="studio-select" style="width: 100%; box-sizing: border-box; padding: 10px 14px; background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; color: #f8fafc; font-size: 0.88rem;" placeholder="e.g. 'VOGUE 2026' or 'HAUTE COUTURE' (Optional)">
+            </div>
+            <p class="field-hint" id="sloganHint" style="margin-top: 4px;">MOSS-Image renders exact character typography onto garments with 100% correct spelling.</p>
+          </div>
+
+          <!-- Custom Fashion LoRA Suite -->
+          <div class="control-section" id="loraSection">
+            <div class="section-label-row">
+              <label class="section-label" for="loraSelect">3. Custom Style & Fashion LoRA</label>
+              <span class="lora-badge" id="loraBadge">Optional</span>
+            </div>
+            <div class="custom-select-wrapper">
+              <select id="loraSelect" class="studio-select">
+                <option value="" selected>None (Base Model Only)</option>
+              </select>
+            </div>
+            <div class="lora-controls hidden" id="loraControls">
+              <div class="slider-row">
+                <span class="slider-label">LoRA Strength:</span>
+                <span class="slider-value" id="loraWeightVal">0.75</span>
+              </div>
+              <input type="range" id="loraWeightSlider" min="0.1" max="1.2" step="0.05" value="0.75" class="studio-slider">
+              <div class="trigger-row hidden" id="triggerTagRow">
+                <span class="trigger-label">Trigger Tag:</span>
+                <button type="button" class="trigger-chip" id="triggerTagBtn" title="Click to insert trigger into prompt">+ Add Trigger</button>
+              </div>
+            </div>
+            <p class="field-hint" id="loraDesc">Enhance garments with trained bespoke fashion lines, embroidery, or couture fabrics.</p>
+          </div>
+
+          <!-- Facial Identity Guidance & Melanin Fidelity -->
+          <div class="control-section" id="identitySection">
+            <div class="section-label-row">
+              <label class="section-label">4. Face Identity & Realism Fidelity</label>
+              <span class="lora-badge" id="identityBadge" style="background: rgba(34, 197, 94, 0.2); color: #4ade80;">Universal Melanin Sync</span>
+            </div>
+            <div class="identity-controls" style="margin-top: 8px;">
+              <label class="checkbox-row" style="display: flex; align-items: center; gap: 8px; cursor: pointer; margin-bottom: 6px;">
+                <input type="checkbox" id="enableFaceIdCheckbox" checked style="accent-color: #6366f1;">
+                <span style="font-size: 0.85rem; color: #e2e8f0; font-weight: 500;">Deep Facial Likeness Guidance (IP-Adapter FaceID)</span>
+              </label>
+              <div class="slider-row" style="margin-top: 6px;">
+                <span class="slider-label">Likeness Fidelity:</span>
+                <span class="slider-value" id="faceIdWeightVal">0.65 (Optimal)</span>
+              </div>
+              <input type="range" id="faceIdWeightSlider" min="0.40" max="0.75" step="0.05" value="0.65" class="studio-slider">
+              <p class="field-hint" id="identityDesc" style="margin-top: 4px;">Universal 8-tier Fitzpatrick skin profiling locks authentic melanin and natural pores across all races.</p>
+            </div>
+          </div>
+
+          <!-- Target Garment Chips (for in-place mode) -->
+          <div class="control-section" id="targetGarmentSection">
+            <label class="section-label">5. Target Garment</label>
+            <div class="chip-group" id="garmentChips">
+              <button type="button" class="target-chip active" data-target="dress">Dress / Gown</button>
+              <button type="button" class="target-chip" data-target="upper">Tops / Blouse</button>
+              <button type="button" class="target-chip" data-target="lower">Bottoms / Pants</button>
+              <button type="button" class="target-chip" data-target="all">Full Outfit</button>
+            </div>
+          </div>
+
+          <!-- Camera Framing & Shot Distance (for Full Scene mode) -->
+          <div class="control-section hidden" id="framingSection">
+            <div class="section-label-row">
+              <label class="section-label">5. Camera Distance & Framing</label>
+              <span class="lora-badge" style="background: rgba(99, 102, 241, 0.2); color: #a5b4fc;">Anti-Crop Active</span>
+            </div>
+            <div class="chip-group" id="framingChips">
+              <button type="button" class="target-chip active" data-framing="editorial" data-aspect="portrait">Fashion Editorial (Waist-Up)</button>
+              <button type="button" class="target-chip" data-framing="full_body" data-aspect="story">Full Outfit / Runway (9:16)</button>
+              <button type="button" class="target-chip" data-framing="portrait" data-aspect="portrait">Classic Beauty Portrait</button>
+            </div>
+            <p class="field-hint" style="margin-top: 4px;">Pulls camera back to guarantee complete garment drape and full body silhouette without tight face cropping.</p>
+          </div>
+
+          <!-- Outfit Prompt -->
+          <div class="control-section">
+            <label class="section-label" for="promptInput">6. Outfit, Styling & Anatomy Description</label>
+            <textarea id="promptInput" rows="3" class="studio-textarea" placeholder="Describe outfit, colors, fabric, or body sizing... (e.g. emerald silk gown, slender waist, full bust)"></textarea>
+            
+            <div class="prompt-chips-label">Quick Ideas (High Fashion, Red Carpet & Haute Couture):</div>
+            <div class="prompt-chips">
+              <button type="button" class="p-chip" data-text="sensual vintage 1950s Old Hollywood black velvet off-shoulder gown, sweetheart neckline, slender waist, form-fitting mermaid silhouette, sheer black opera gloves, diamond collar necklace, moody classic studio backlight, sultry expression, cinematic grain">Old Hollywood Noir</button>
+              <button type="button" class="p-chip" data-text="alluring old money Amalfi aesthetic, backless ivory liquid silk slip dress, draped cowl neckline, slender waist, high thigh slit, delicate gold chain anklet, gentle Mediterranean balcony ambient light, soft coastal breeze, clean natural skin tones">Riviera Silk Slip</button>
+              <button type="button" class="p-chip" data-text="sultry French sheer black lace corset gown with structured boning, cinched waist, semi-translucent chiffon floor-length skirt, delicate floral lace embroidery, subtle cleavage, dramatic red carpet spotlight, Vogue editorial">Couture Corset & Lace</button>
+              <button type="button" class="p-chip" data-text="emerald green velvet evening gown with intricate golden floral embroidery, tailored silhouette, slender waist, plunging neckline, high-fashion silk">Emerald Velvet Gown</button>
+              <button type="button" class="p-chip" data-text="crimson red silk satin slip dress, delicate spaghetti straps, elegant fluid drape, Cannes red carpet gala lighting">Crimson Silk Satin</button>
+              <button type="button" class="p-chip" data-text="tailored Parisian double-breasted cream tweed blazer and high-waisted wide-leg trousers with gold buttons">Parisian Tweed Suit</button>
+              <button type="button" class="p-chip" data-text="midnight navy bespoke tuxedo with silk lapels, crisp white pleated shirt, black bow tie, studio glamour">Bespoke Tuxedo</button>
+            </div>
+          </div>
+
+          <!-- Action Button -->
+          <button id="generateBtn" class="generate-btn">
+            <span class="btn-text">Generate Photorealistic Outfit</span>
+            <span class="btn-glow"></span>
+          </button>
+        </div>
+
+        <!-- ========================================================= -->
+        <!-- TAB 2: AI PHOTO & FACE RESTORATION                        -->
+        <!-- ========================================================= -->
+        <div class="tab-panel hidden" id="panel-restore">
+          <div class="panel-intro">
+            <h3>🪄 AI Photo & Face Restoration</h3>
+            <p>Restores degraded, compressed, or blurry photographs using CodeFormer discrete priors and adaptive dermal contrast.</p>
+          </div>
+
+          <div class="control-section">
+            <label class="section-label">Source Photo</label>
+            <div class="upload-dropzone tool-dropzone" data-target-tab="restore">
+              <input type="file" class="tool-file-input" accept="image/png,image/jpeg,image/webp" hidden>
+              <div class="dropzone-content">
+                <div class="upload-icon">🪄</div>
+                <p class="upload-title">Drop photo here or <span>Browse</span></p>
+                <button type="button" class="sample-btn tool-sample-btn">Use Studio Sample</button>
+              </div>
+              <div class="upload-preview-container hidden">
+                <img class="tool-preview-img" alt="Preview">
+                <button type="button" class="remove-upload-btn tool-remove-btn">&times;</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="control-section">
+            <div class="slider-row">
+              <span class="slider-label">Face Codebook Fidelity:</span>
+              <span class="slider-value" id="restoreFidelityVal">0.85 (Natural Pores)</span>
+            </div>
+            <input type="range" id="restoreFidelitySlider" min="0.50" max="1.0" step="0.05" value="0.85" class="studio-slider">
+            <p class="field-hint">Higher fidelity preserves authentic freckles, pores, and smile lines with zero plastic smoothing.</p>
+          </div>
+
+          <button id="restoreBtn" class="generate-btn">
+            <span class="btn-text">Restore Photo & Facial Details</span>
+            <span class="btn-glow"></span>
+          </button>
+        </div>
+
+        <!-- ========================================================= -->
+        <!-- TAB 3: TRANSPARENT BACKGROUND REMOVER                     -->
+        <!-- ========================================================= -->
+        <div class="tab-panel hidden" id="panel-rembg">
+          <div class="panel-intro">
+            <h3>✂️ Transparent Background Remover</h3>
+            <p>Extracts subject with clean hair strands and boundary alpha matting into a transparent PNG.</p>
+          </div>
+
+          <div class="control-section">
+            <label class="section-label">Source Photo</label>
+            <div class="upload-dropzone tool-dropzone" data-target-tab="rembg">
+              <input type="file" class="tool-file-input" accept="image/png,image/jpeg,image/webp" hidden>
+              <div class="dropzone-content">
+                <div class="upload-icon">✂️</div>
+                <p class="upload-title">Drop photo here or <span>Browse</span></p>
+                <button type="button" class="sample-btn tool-sample-btn">Use Studio Sample</button>
+              </div>
+              <div class="upload-preview-container hidden">
+                <img class="tool-preview-img" alt="Preview">
+                <button type="button" class="remove-upload-btn tool-remove-btn">&times;</button>
+              </div>
+            </div>
+          </div>
+
+          <button id="rembgBtn" class="generate-btn">
+            <span class="btn-text">Remove Background (Alpha PNG)</span>
+            <span class="btn-glow"></span>
+          </button>
+        </div>
+
+        <!-- ========================================================= -->
+        <!-- TAB 4: MAGIC OBJECT & BLEMISH ERASER                      -->
+        <!-- ========================================================= -->
+        <div class="tab-panel hidden" id="panel-eraser">
+          <div class="panel-intro">
+            <h3>🧹 Magic Object & Blemish Eraser</h3>
+            <p>Brush over unwanted objects, blemishes, watermarks, or background clutter to seamlessly erase them.</p>
+          </div>
+
+          <div class="control-section">
+            <label class="section-label">Source Photo</label>
+            <div class="upload-dropzone tool-dropzone" data-target-tab="eraser">
+              <input type="file" class="tool-file-input" accept="image/png,image/jpeg,image/webp" hidden>
+              <div class="dropzone-content">
+                <div class="upload-icon">🧹</div>
+                <p class="upload-title">Drop photo here or <span>Browse</span></p>
+                <button type="button" class="sample-btn tool-sample-btn">Use Studio Sample</button>
+              </div>
+              <div class="upload-preview-container hidden">
+                <img class="tool-preview-img" alt="Preview">
+                <button type="button" class="remove-upload-btn tool-remove-btn">&times;</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="control-section" id="eraserCanvasSection">
+            <div class="section-label-row">
+              <label class="section-label">Brush Mask Canvas</label>
+              <button type="button" id="clearBrushBtn" class="trigger-chip" style="color: #ef4444; border-color: rgba(239, 68, 68, 0.3);">Clear Strokes</button>
+            </div>
+            <div class="canvas-paint-wrapper" id="canvasPaintWrapper">
+              <canvas id="eraserBaseCanvas"></canvas>
+              <canvas id="eraserDrawCanvas"></canvas>
+            </div>
+            <div class="slider-row" style="margin-top: 10px;">
+              <span class="slider-label">Brush Size:</span>
+              <span class="slider-value" id="brushSizeVal">24px</span>
+            </div>
+            <input type="range" id="brushSizeSlider" min="6" max="72" step="2" value="24" class="studio-slider">
+          </div>
+
+          <button id="eraseBtn" class="generate-btn">
+            <span class="btn-text">Erase Selected Objects</span>
+            <span class="btn-glow"></span>
+          </button>
+        </div>
+
+        <!-- ========================================================= -->
+        <!-- TAB 5: 4K ULTRA-UPSCALER                                  -->
+        <!-- ========================================================= -->
+        <div class="tab-panel hidden" id="panel-upscale">
+          <div class="panel-intro">
+            <h3>🔍 4K Ultra-Upscaler</h3>
+            <p>Upscales photos by 400% to crystal-clear 4K resolution using RealESRGAN / NMKD super-resolution.</p>
+          </div>
+
+          <div class="control-section">
+            <label class="section-label">Source Photo</label>
+            <div class="upload-dropzone tool-dropzone" data-target-tab="upscale">
+              <input type="file" class="tool-file-input" accept="image/png,image/jpeg,image/webp" hidden>
+              <div class="dropzone-content">
+                <div class="upload-icon">🔍</div>
+                <p class="upload-title">Drop photo here or <span>Browse</span></p>
+                <button type="button" class="sample-btn tool-sample-btn">Use Studio Sample</button>
+              </div>
+              <div class="upload-preview-container hidden">
+                <img class="tool-preview-img" alt="Preview">
+                <button type="button" class="remove-upload-btn tool-remove-btn">&times;</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="control-section">
+            <label class="section-label">Upscale Super-Resolution Model</label>
+            <div class="custom-select-wrapper">
+              <select id="upscaleModelSelect" class="studio-select">
+                <option value="RealESRGAN_x4plus.pth" selected>RealESRGAN x4plus (Photographic Micro-Texture) ★</option>
+                <option value="4x_NMKD-Superscale-SP_178000_G.pth">4x NMKD Superscale SP (Razor Crisp Edges)</option>
+              </select>
+            </div>
+          </div>
+
+          <button id="upscaleBtn" class="generate-btn">
+            <span class="btn-text">Upscale to 4K Ultra-HD</span>
+            <span class="btn-glow"></span>
+          </button>
+        </div>
+
+        <!-- ========================================================= -->
+        <!-- TAB 6: AI DEBLUR & SHARPENER                              -->
+        <!-- ========================================================= -->
+        <div class="tab-panel hidden" id="panel-deblur">
+          <div class="panel-intro">
+            <h3>⚡ AI Deblur & Sharpener</h3>
+            <p>Eliminates motion blur and out-of-focus camera softness with multi-scale frequency deconvolution.</p>
+          </div>
+
+          <div class="control-section">
+            <label class="section-label">Source Photo</label>
+            <div class="upload-dropzone tool-dropzone" data-target-tab="deblur">
+              <input type="file" class="tool-file-input" accept="image/png,image/jpeg,image/webp" hidden>
+              <div class="dropzone-content">
+                <div class="upload-icon">⚡</div>
+                <p class="upload-title">Drop photo here or <span>Browse</span></p>
+                <button type="button" class="sample-btn tool-sample-btn">Use Studio Sample</button>
+              </div>
+              <div class="upload-preview-container hidden">
+                <img class="tool-preview-img" alt="Preview">
+                <button type="button" class="remove-upload-btn tool-remove-btn">&times;</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="control-section">
+            <div class="slider-row">
+              <span class="slider-label">Sharpness Strength:</span>
+              <span class="slider-value" id="deblurStrengthVal">1.35 (Optimal)</span>
+            </div>
+            <input type="range" id="deblurStrengthSlider" min="1.0" max="2.5" step="0.05" value="1.35" class="studio-slider">
+          </div>
+
+          <button id="deblurBtn" class="generate-btn">
+            <span class="btn-text">Deblur & Sharpen Photograph</span>
+            <span class="btn-glow"></span>
+          </button>
+        </div>
+
+      </section>
+
+      <!-- Right Column: Interactive Before/After Studio Viewer -->
+      <section class="viewer-panel glass-card">
+        <div class="viewer-header">
+          <div class="viewer-meta">
+            <h2>Studio Canvas</h2>
+            <span class="viewer-tag" id="canvasTag">Ready for creation</span>
+          </div>
+          <div class="viewer-actions hidden" id="viewerActions">
+            <button id="downloadBtn" class="action-btn download-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+              </svg>
+              Download Result
+            </button>
+          </div>
+        </div>
+
+        <!-- Interactive Split Slider Container -->
+        <div class="canvas-container" id="canvasContainer">
+          <!-- Placeholder State -->
+          <div class="canvas-placeholder" id="canvasPlaceholder">
+            <div class="placeholder-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                <circle cx="8.5" cy="8.5" r="1.5"/>
+                <polyline points="21 15 16 10 5 21"/>
+              </svg>
+            </div>
+            <h3>Upload or choose a photo to begin</h3>
+            <p>Interactive Before/After slider will reveal pixel-perfect transformation.</p>
+          </div>
+
+          <!-- Loading State -->
+          <div class="canvas-loading hidden" id="canvasLoading">
+            <div class="spinner"></div>
+            <h3 id="loadingStatusText">Synthesizing Outfit...</h3>
+            <p id="loadingTimer">Elapsed: 0s</p>
+          </div>
+
+          <!-- Interactive Before/After Split View -->
+          <div class="split-slider-wrapper hidden" id="splitSliderWrapper">
+            <div class="slider-image-layer after-layer">
+              <img id="afterImg" alt="Transformed Result">
+              <span class="layer-pill after-pill">Transformed</span>
+            </div>
+            <div class="slider-image-layer before-layer" id="beforeLayer">
+              <img id="beforeImg" alt="Original Reference">
+              <span class="layer-pill before-pill">Original</span>
+            </div>
+            <div class="slider-divider" id="sliderDivider">
+              <div class="divider-handle">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <path d="M18 8L22 12L18 16M6 8L2 12L6 16"/>
+                </svg>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Generation Info Bar -->
+        <div class="generation-info hidden" id="generationInfo">
+          <div class="info-item">
+            <span class="info-label">Active Tool</span>
+            <span class="info-val" id="infoModel">—</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Mode / Config</span>
+            <span class="info-val" id="infoMode">—</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Render Time</span>
+            <span class="info-val" id="infoTime">—</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Melanin & Likeness</span>
+            <span class="info-val highlight" id="infoLikeness">100% Locked</span>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

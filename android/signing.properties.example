@@ -1,0 +1,6 @@
+# Copy to signing.properties and fill in your private signing credentials.
+# storeFile is relative to android/app, or may be an absolute path.
+storeFile=release.keystore
+storePassword=replace-with-your-keystore-password
+keyAlias=photovance
+keyPassword=replace-with-your-key-password

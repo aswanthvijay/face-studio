@@ -1,0 +1,13 @@
+[
+  {
+    "file": "text_detection_en_ppocrv3_2023may.onnx",
+    "url": "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/text_detection_ppocr/text_detection_en_ppocrv3_2023may.onnx",
+    "sha256": "03f550c6b406fda8bf54bd8327815f6c7e2edd98cea02348c93d879254366587",
+    "bytes": 2423490,
+    "license": "Apache-2.0",
+    "license_file": "LICENSE",
+    "source": "https://github.com/opencv/opencv_zoo/tree/main/models/text_detection_ppocr",
+    "quantized": false,
+    "license_sha256": "609aaac97719da6b71cd3ffd08b5de08b75f582e5c50a196fab522b6d5087714"
+  }
+]
