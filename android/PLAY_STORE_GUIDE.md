@@ -27,6 +27,10 @@ Deploying Cloud Functions requires the Firebase project's Blaze plan and a Googl
 
 The callable `verifyPlayPurchase` verifies the purchase token against Google Play before the app marks VIP active. Each purchase is bound to the signed-in Firebase UID using Play Billing's obfuscated account identifier; restoration must use that same Photovance account. It stores only the SHA-256 hash of the token in Firestore; client access to those records is denied by `firestore.rules`. The `deleteAccountData` callable requires a recent sign-in, removes the account's Firestore data, then deletes the Firebase Auth account.
 
+### Downloadable Android preview APK
+
+The `Android APK preview` GitHub Actions workflow runs Android unit tests and builds a debug-signed APK for pull requests targeting `main`. Download the `photovance-android-<version>` artifact from the successful Actions run. Merging the workflow to `main` builds and attaches the APK and its SHA-256 checksum to a prerelease named `android-v<version>`. This is a sideload/testing build, not a Play production release. The version can be set when manually dispatching the workflow from `main`.
+
 ### Play Console setup
 
 1. Create the Play Console app using package name `com.photovance.app`, enable Play App Signing, and keep the upload key private.

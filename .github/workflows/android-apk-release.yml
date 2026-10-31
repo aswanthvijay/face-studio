@@ -3,7 +3,10 @@ name: Android APK preview
 on:
   push:
     branches:
-      - aswanthvijay-performance-review
+      - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       version_name:
@@ -19,7 +22,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: android-apk-${{ inputs.version_name || github.ref }}
+  group: android-apk-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -59,7 +62,18 @@ jobs:
           sha256sum "dist/android/photovance-android-${VERSION_NAME}.apk" \
             > "dist/android/photovance-android-${VERSION_NAME}.apk.sha256"
 
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: photovance-android-${{ env.VERSION_NAME }}
+          path: |
+            dist/android/photovance-android-${{ env.VERSION_NAME }}.apk
+            dist/android/photovance-android-${{ env.VERSION_NAME }}.apk.sha256
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Publish Android preview release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: android-v${{ env.VERSION_NAME }}
