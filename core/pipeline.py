@@ -1978,7 +1978,7 @@ def run_face_studio_pipeline(
             face_locked_img = rendered_img
             face_swapped = False
             if enable_face_id:
-                lock_fidelity = max(0.55, min(0.75, float(face_id_weight)))
+                lock_fidelity = max(0.55, min(0.90, float(face_id_weight)))
                 face_locked_img, face_swapped = apply_face_lock(
                     source_image=source_image,
                     target_image=rendered_img,

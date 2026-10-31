@@ -289,11 +289,11 @@ def harmonize_unified_canvas_skin(
     clothing_labels: np.ndarray = None,
     edit_mask: Image.Image = None
 ):
-    """Gently align body chroma to the face while preserving scene luminance.
+    """Align exposed body skin to the transferred face while preserving local shading.
 
     Semantic skin support and inward feathering protect clothing, hair and
-    background. A single bounded chroma offset preserves directional shading;
-    anatomical rectangles and per-limb exposure corrections are not used.
+    background. Bounded Lab offsets bring the body complexion toward the measured
+    final face tone while preserving directional highlights and shadows.
     """
     img_rgb = np.array(canvas_image.convert("RGB"))
     img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
@@ -310,14 +310,6 @@ def harmonize_unified_canvas_skin(
     if face_bbox is None:
         return (canvas_image, {}) if return_info else canvas_image
 
-    source_lab = None
-    if src_skin_profile is not None:
-        profile_lab = src_skin_profile.get("lab_mean")
-        if profile_lab is not None:
-            profile_lab = np.asarray(profile_lab, dtype=np.float32).reshape(-1)
-            if profile_lab.size == 3 and np.isfinite(profile_lab).all():
-                source_lab = profile_lab
-
     try:
         if clothing_labels is None:
             from core.clothing_engine import parse_clothing_labels
@@ -326,11 +318,12 @@ def harmonize_unified_canvas_skin(
             labels = clothing_labels
         if labels.shape[:2] != (h, w):
             labels = cv2.resize(labels, (w, h), interpolation=cv2.INTER_NEAREST)
-        if source_lab is not None:
-            target = source_lab
-        else:
-            from core.face_engine import extract_face_skin_profile
-            target, _ = extract_face_skin_profile(img_bgr, face_bbox)
+        from core.face_engine import extract_face_skin_profile
+        target, _ = extract_face_skin_profile(img_bgr, face_bbox)
+        if not np.isfinite(target).all() and src_skin_profile is not None:
+            profile_lab = np.asarray(src_skin_profile.get("lab_mean", []), dtype=np.float32).reshape(-1)
+            if profile_lab.size == 3 and np.isfinite(profile_lab).all():
+                target = profile_lab
     except Exception as error:
         print(f"[SkinEngine] Skin correction skipped without reliable segmentation: {error}")
         return (canvas_image, {}) if return_info else canvas_image
@@ -360,9 +353,10 @@ def harmonize_unified_canvas_skin(
         return (canvas_image, {}) if return_info else canvas_image
     body_ab = np.median(lab[:, :, 1:][sample], axis=0)
     target_ab = np.asarray(target[1:], dtype=np.float32) - 128.0
-    # Allow full authentic melanin chroma alignment (up to ±20.0) across body skin
-    # without artificial clamping that leaves arms/neck pale and disconnected from face
     chroma_delta = np.clip(target_ab - body_ab, -20.0, 20.0)
+    target_l = float(target[0]) / 2.55
+    body_l = float(np.median(lightness[sample]))
+    lightness_delta = float(np.clip(target_l - body_l, -14.0, 14.0))
     alpha_mask = feather_region(body_skin_mask, max(4.0, min(24.0, bw*0.07)))
     alpha_mask *= jaw_ramp * (1.0 - face_protection)
     shadow_weight = np.clip((lightness - 4.0) / 12.0, 0.0, 1.0)
@@ -371,6 +365,7 @@ def harmonize_unified_canvas_skin(
     if edit_alpha is not None:
         alpha_mask *= edit_alpha
     lab_out = lab.copy()
+    lab_out[:, :, 0] += lightness_delta * alpha_mask
     lab_out[:, :, 1:] += chroma_delta * alpha_mask[:, :, None]
     adjusted = cv2.cvtColor(lab_out, cv2.COLOR_LAB2BGR) * 255.0
     result = img_bgr.copy()
@@ -384,7 +379,7 @@ def harmonize_unified_canvas_skin(
         encoded_lab[:, :, 1:] += 128.0
         info = {
             "target_lab": target.tolist(), "active_zones": [{
-                "name": "body_chroma", "dl": 0.0,
+                "name": "body_skin", "dl": lightness_delta,
                 "da": float(chroma_delta[0]), "db": float(chroma_delta[1]),
                 "pixels": int(np.count_nonzero(body_skin_mask)), "mask": body_skin_mask,
                 "orig_med_l": float(np.median(lightness[sample])*2.55),

@@ -417,7 +417,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (faceIdWeightSlider && faceIdWeightVal) {
     faceIdWeightSlider.addEventListener('input', () => {
       const val = parseFloat(faceIdWeightSlider.value);
-      faceIdWeightVal.textContent = val === 0.65 ? "0.65 (Optimal)" : val.toFixed(2);
+      faceIdWeightVal.textContent = val === 0.80 ? "0.80 (Natural detail)" : val.toFixed(2);
     });
   }
 
@@ -698,7 +698,7 @@ document.addEventListener('DOMContentLoaded', () => {
         lora_id: loraSelect ? loraSelect.value : null,
         lora_weight: loraWeightSlider ? parseFloat(loraWeightSlider.value) : 0.75,
         enable_face_id: enableFaceIdCheckbox ? enableFaceIdCheckbox.checked : true,
-        face_id_weight: faceIdWeightSlider ? parseFloat(faceIdWeightSlider.value) : 0.65
+        face_id_weight: faceIdWeightSlider ? parseFloat(faceIdWeightSlider.value) : 0.80
       };
 
       const res = await fetch('/api/change-dress', {
