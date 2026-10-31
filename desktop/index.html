@@ -11,14 +11,14 @@
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-mark">✦</div>
-        <div><strong>Face Studio</strong><small>Windows desktop</small></div>
+        <div><strong>Face Studio</strong><small>Your private image studio</small></div>
       </div>
-      <button id="newChat" class="new-chat">＋ <span>New chat</span></button>
+      <button id="newChat" class="new-chat" type="button"><span class="new-chat-icon">＋</span><span>New creation</span></button>
       <div class="section-title">YOUR CHATS</div>
       <div id="chatList" class="chat-list"></div>
       <div class="sidebar-footer">
         <span class="status-dot"></span>
-        <span id="connectionStatus">Connecting to local studio…</span>
+        <div class="connection-copy"><strong>Local engine</strong><span id="connectionStatus">Connecting to local studio…</span></div>
       </div>
     </aside>
 
@@ -26,14 +26,15 @@
       <header class="topbar">
         <div class="active-title">
           <strong id="chatTitle">New chat</strong>
-          <small>Private · generated on your local studio</small>
+          <small><span class="privacy-mark"></span>Private · generated on this device</small>
         </div>
         <div class="top-actions">
           <span id="updateStatus" class="update-status" role="status">Update check pending</span>
-          <button id="checkUpdates" class="quiet-button update-button" type="button">Check for updates</button>
+          <button id="checkUpdates" class="quiet-button update-button" type="button"><span aria-hidden="true">↻</span> Check updates</button>
           <button id="updateNow" class="quiet-button update-now hidden" type="button">Update now</button>
-          <button id="renameChat" class="quiet-button" title="Rename chat">Rename</button>
-          <button id="deleteChat" class="quiet-button danger" title="Delete chat">Delete</button>
+          <span class="action-divider" aria-hidden="true"></span>
+          <button id="renameChat" class="quiet-button" type="button" title="Rename chat">Rename</button>
+          <button id="deleteChat" class="quiet-button danger" type="button" title="Delete chat">Delete</button>
         </div>
       </header>
 
@@ -43,13 +44,16 @@
             <div class="welcome-icon">✦</div>
             <div>
               <span class="eyebrow">YOUR PRIVATE CREATIVE STUDIO</span>
-              <h1>What would you like to create?</h1>
-              <p>Choose a starting point, personalize the prompt, then add a reference photo.</p>
+              <h1>Imagine it. <span>See yourself in it.</span></h1>
+              <p>Choose a look, add your photo, and let your personal studio bring the idea to life.</p>
             </div>
           </div>
+          <div class="welcome-steps" aria-label="How it works">
+            <span><b>01</b> Pick a look</span><i></i><span><b>02</b> Add your photo</span><i></i><span><b>03</b> Create</span>
+          </div>
           <div class="prompt-library-heading">
-            <strong>Start with a look</strong>
-            <span>Eight ideas · click to edit</span>
+            <div><strong>Find your next look</strong><small>Choose a starting point. Make it yours.</small></div>
+            <span>8 EDITABLE IDEAS</span>
           </div>
           <div class="prompt-grid" aria-label="Prebuilt prompts">
             <button class="prompt-card" type="button" data-prompt="An elegant emerald evening gown with subtle beadwork, refined silhouette, realistic flowing fabric, full-length fashion photograph in a soft neutral studio.">
@@ -77,44 +81,48 @@
               <span class="prompt-card-icon">✿</span><strong>Ivory bridal</strong><small>Delicate lace · soft</small>
             </button>
           </div>
-          <div class="welcome-tip"><span>Tip</span> Prompts are editable. Your reference photo and generations stay on this device.</div>
+          <div class="welcome-tip"><span class="tip-icon">✦</span><span><strong>A little inspiration goes a long way</strong><small>Every prompt is editable. Your photos and creations stay on this device.</small></span></div>
         </div>
       </section>
 
       <section class="composer-wrap">
+        <div class="composer-heading">
+          <div><span class="eyebrow">MAKE IT YOURS</span><strong>Describe your look</strong></div>
+          <span class="composer-local"><span class="privacy-mark"></span>Private on this device</span>
+        </div>
         <div id="attachment" class="attachment hidden">
           <img id="attachmentPreview" alt="Selected reference photo">
           <div><strong>Reference photo</strong><small id="attachmentName">Ready to use</small></div>
           <button id="removeAttachment" class="remove-attachment" title="Remove photo">×</button>
         </div>
         <div class="options">
-          <label>Model<select id="modelSelect"><option value="">Loading models…</option></select></label>
-          <label>Mode<select id="modeSelect">
+          <label>MODEL<select id="modelSelect" aria-label="Image model"><option value="">Loading models…</option></select></label>
+          <label>SCENE<select id="modeSelect" aria-label="Generation mode">
             <option value="in_place_swap">Outfit swap · preserve original scene</option>
             <option value="full_scene">Full scene · generate new scene</option>
           </select></label>
-          <label>Target<select id="targetSelect">
+          <label>OUTFIT AREA<select id="targetSelect" aria-label="Outfit area">
             <option value="dress">Dress / gown</option>
             <option value="upper">Top / blouse</option>
             <option value="lower">Bottoms / pants</option>
             <option value="all">Full outfit</option>
           </select></label>
-          <label>Variations<select id="variationSelect">
+          <label>RESULTS<select id="variationSelect" aria-label="Number of images">
             <option value="1">1 image</option><option value="2">2 images</option>
             <option value="3">3 images</option><option value="4">4 images</option>
           </select></label>
-          <label class="identity-option"><span>Face identity match</span><input id="faceIdEnabled" type="checkbox" checked></label>
-          <label class="fidelity-option">Likeness <span id="faceIdWeightValue">0.80</span>
+          <label class="identity-option"><input id="faceIdEnabled" type="checkbox" checked><span>Match my face</span></label>
+          <label class="fidelity-option">LIKENESS <span id="faceIdWeightValue">0.80</span>
             <input id="faceIdWeight" type="range" min="0.40" max="0.90" step="0.05" value="0.80">
           </label>
         </div>
         <div class="composer">
           <input id="imageInput" type="file" accept="image/png,image/jpeg,image/webp,.cr2" hidden>
-          <button id="attachPhoto" class="attach-button" title="Attach a reference photo">＋</button>
+          <button id="attachPhoto" class="attach-button" type="button" title="Add a reference photo" aria-label="Add a reference photo"><span aria-hidden="true">＋</span><small>Add photo</small></button>
           <textarea id="promptInput" rows="2" placeholder="Describe an outfit or image to create…" aria-label="Describe your image"></textarea>
-          <button id="sendButton" class="send-button" title="Generate">↑</button>
+          <button id="sendButton" class="send-button" type="button" title="Generate image"><span>Generate</span><b aria-hidden="true">↗</b></button>
         </div>
-        <div class="composer-hint">Enter to generate · Shift+Enter for a new line · Your reference image stays attached to this chat</div>
+        <div class="composer-hint"><span>Enter</span> to create <i>·</i> <span>Shift + Enter</span> for a new line <i>·</i> Your reference photo stays with this chat</div>
       </section>
     </main>
   </div>
