@@ -370,7 +370,7 @@ class DesktopBridge:
             return {"success": False, "error": f"Could not launch the Windows installer: {error}"}
         return {"success": True, "version": checked["version"], "installer_started": True}
 
-    def save_asset(self, relative_url):
+    def _fetch_studio_image(self, relative_url):
         parsed = urlsplit(relative_url) if isinstance(relative_url, str) else None
         path_parts = unquote(parsed.path).strip("/").split("/") if parsed is not None else []
         if (parsed is None or parsed.scheme or parsed.netloc or parsed.query or parsed.fragment
@@ -392,6 +392,10 @@ class DesktopBridge:
         content = response.content
         if len(content) > 50 * 1024 * 1024:
             raise ValueError("The saved image exceeds the 50 MB limit.")
+        return content, extension
+
+    def save_asset(self, relative_url):
+        content, extension = self._fetch_studio_image(relative_url)
         self.store.asset_directory.mkdir(parents=True, exist_ok=True)
         name = uuid.uuid4().hex + extension
         target = self.store.asset_directory / name
@@ -403,6 +407,45 @@ class DesktopBridge:
             temporary.unlink(missing_ok=True)
             raise RuntimeError(f"Could not preserve the image in this chat: {error}") from error
         return f"asset:{name}"
+
+    def download_result(self, image_reference, result_number):
+        if (not isinstance(result_number, int) or isinstance(result_number, bool)
+                or not 1 <= result_number <= 4):
+            raise ValueError("The result number is invalid.")
+
+        if isinstance(image_reference, str) and image_reference.startswith("asset:"):
+            name = image_reference.removeprefix("asset:")
+            if not ASSET_NAME_PATTERN.fullmatch(name):
+                raise ValueError("The generated image reference is invalid.")
+            image_path = self.store.asset_directory / name
+            try:
+                content = image_path.read_bytes()
+            except OSError as error:
+                raise RuntimeError(f"Could not read the generated image: {error}") from error
+            if len(content) > 50 * 1024 * 1024:
+                raise ValueError("The generated image exceeds the 50 MB limit.")
+            extension = image_path.suffix
+        else:
+            content, extension = self._fetch_studio_image(image_reference)
+
+        import webview
+
+        filename = f"FaceStudio-result-{result_number}{extension}"
+        destination = self.window.create_file_dialog(
+            webview.FileDialog.SAVE,
+            save_filename=filename
+        )
+        if not destination:
+            return {"success": True, "cancelled": True}
+        target = Path(destination[0] if not isinstance(destination, str) else destination)
+        temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            temporary.write_bytes(content)
+            temporary.replace(target)
+        except OSError as error:
+            temporary.unlink(missing_ok=True)
+            raise RuntimeError(f"Could not save the generated image: {error}") from error
+        return {"success": True, "path": str(target)}
 
     def save_assets(self, payload):
         try:

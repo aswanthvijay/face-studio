@@ -105,6 +105,30 @@
     container.append(link);
   }
 
+  function appendResult(container, displayUrl, imageReference, index) {
+    const card = document.createElement("div");
+    card.className = "result-card";
+    appendImage(card, displayUrl, `Generated result ${index + 1}`);
+    const button = document.createElement("button");
+    button.className = "result-download";
+    button.type = "button";
+    button.textContent = "Download image";
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        const result = await window.pywebview.api.download_result(imageReference, index + 1);
+        if (result.cancelled) return;
+        showToast("Image saved successfully.");
+      } catch (error) {
+        showToast(error.message || "Could not save the generated image.");
+      } finally {
+        button.disabled = false;
+      }
+    });
+    card.append(button);
+    container.append(card);
+  }
+
   function renderMessages() {
     const chat = activeChat();
     elements.messages.replaceChildren();
@@ -137,7 +161,7 @@
         if (Array.isArray(message.results) && message.results.length) {
           const grid = document.createElement("div");
           grid.className = "result-grid";
-          message.results.forEach((url, index) => appendImage(grid, imageUrl(url), `Generated result ${index + 1}`));
+          message.results.forEach((url, index) => appendResult(grid, imageUrl(url), url, index));
           wrapper.append(grid);
           const note = document.createElement("div");
           note.className = "assistant-note";
