@@ -10,6 +10,7 @@
     attachment: $("attachment"), attachmentPreview: $("attachmentPreview"),
     attachmentName: $("attachmentName"), status: $("connectionStatus"),
     statusDot: document.querySelector(".status-dot"), toast: $("toast"),
+    generationQueueStatus: $("generationQueueStatus"),
     updateStatus: $("updateStatus"), checkUpdates: $("checkUpdates"),
     updateNow: $("updateNow")
   };
@@ -19,6 +20,8 @@
   let assetsUrl = null;
   let saving = Promise.resolve();
   let toastTimer;
+  const generationQueue = [];
+  let processingGeneration = false;
 
   const newId = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const activeChat = () => chats.find((chat) => chat.id === activeId);
@@ -39,6 +42,21 @@
       showToast(`Could not save chats: ${error.message || error}`);
     });
     return saving;
+  }
+
+  function updateGenerationQueueStatus() {
+    const queuedCount = generationQueue.length;
+    if (!processingGeneration && queuedCount === 0) {
+      elements.generationQueueStatus.textContent = "";
+      elements.updateNow.disabled = false;
+      return;
+    }
+
+    const parts = [];
+    if (processingGeneration) parts.push("Generating 1 image");
+    if (queuedCount) parts.push(`${queuedCount} waiting`);
+    elements.generationQueueStatus.textContent = parts.join(" · ");
+    elements.updateNow.disabled = true;
   }
 
   function createChat() {
@@ -241,7 +259,7 @@
     }
   }
 
-  async function generate() {
+  function generate() {
     const chat = activeChat();
     const prompt = elements.prompt.value.trim();
     if (!chat || !prompt) return;
@@ -251,24 +269,80 @@
     }
     saveSettings();
     chat.title = chat.title === "New chat" ? prompt.slice(0, 42) : chat.title;
-    const userMessage = { role: "user", text: prompt, sourceUrl: chat.sourceUrl, createdAt: new Date().toISOString() };
-    const pending = { role: "assistant", pending: "Creating your image…", results: [] };
+    const sourceUrl = chat.sourceUrl;
+    const pending = {
+      role: "assistant",
+      pending: "Waiting for the GPU…",
+      results: []
+    };
+    const job = {
+      chat,
+      prompt,
+      sourceUrl,
+      imageId: chat.imageId,
+      modelId: chat.modelId || elements.model.value,
+      mode: chat.mode,
+      target: chat.target,
+      variations: chat.variations,
+      enableFaceId: chat.enableFaceId,
+      faceIdWeight: chat.faceIdWeight,
+      pending,
+      requestId: newId()
+    };
+    const userMessage = { role: "user", text: prompt, sourceUrl, createdAt: new Date().toISOString() };
     chat.messages.push(userMessage, pending);
     elements.prompt.value = "";
-    elements.send.disabled = true;
-    elements.send.querySelector("span").textContent = "Creating…";
-    elements.updateNow.disabled = true;
+    generationQueue.push(job);
+    updateGenerationQueuePositions();
+    updateGenerationQueueStatus();
     renderChatList();
     renderMessages();
     persist();
-    const requestId = newId();
+    processGenerationQueue();
+  }
+
+  function updateGenerationQueuePositions() {
+    let activeChatUpdated = false;
+    generationQueue.forEach((job, index) => {
+      job.pending.pending = `Waiting for the GPU · position ${index + 1}`;
+      activeChatUpdated = activeChatUpdated || activeId === job.chat.id;
+    });
+    if (activeChatUpdated) renderMessages();
+  }
+
+  async function processGenerationQueue() {
+    if (processingGeneration) return;
+    processingGeneration = true;
+    updateGenerationQueueStatus();
+    try {
+      while (generationQueue.length) {
+        const job = generationQueue.shift();
+        updateGenerationQueuePositions();
+        updateGenerationQueueStatus();
+        await runGeneration(job);
+      }
+    } finally {
+      processingGeneration = false;
+      updateGenerationQueueStatus();
+      if (generationQueue.length) processGenerationQueue();
+    }
+  }
+
+  async function runGeneration(job) {
+    const {
+      chat, prompt, sourceUrl, pending, requestId
+    } = job;
     let progressTimer;
     try {
-      if (chat.sourceUrl?.startsWith("asset:")) {
-        pending.pending = "Restoring reference photo…";
-        renderMessages();
-        chat.imageId = await window.pywebview.api.restore_source(chat.sourceUrl);
+      if (sourceUrl?.startsWith("asset:")) {
+        pending.pending = "Preparing your reference photo…";
+        if (activeId === chat.id) renderMessages();
+        chat.imageId = await window.pywebview.api.restore_source(sourceUrl);
+      } else {
+        chat.imageId = job.imageId;
       }
+      pending.pending = "Starting your generation…";
+      if (activeId === chat.id) renderMessages();
       progressTimer = setInterval(async () => {
         try {
           const progressResponse = await fetch(
@@ -288,12 +362,12 @@
         body: JSON.stringify({
           image_id: chat.imageId,
           prompt,
-          model_id: chat.modelId || elements.model.value,
-          mode: chat.mode,
-          target: chat.target,
-          variations: chat.variations,
-          enable_face_id: chat.enableFaceId,
-          face_id_weight: chat.faceIdWeight,
+          model_id: job.modelId,
+          mode: job.mode,
+          target: job.target,
+          variations: job.variations,
+          enable_face_id: job.enableFaceId,
+          face_id_weight: job.faceIdWeight,
           request_id: requestId
         })
       });
@@ -322,13 +396,10 @@
       pending.createdAt = new Date().toISOString();
     } finally {
       if (progressTimer) clearInterval(progressTimer);
-      elements.send.disabled = false;
-      elements.send.querySelector("span").textContent = "Generate";
-      elements.updateNow.disabled = false;
+      updateGenerationQueueStatus();
       renderChatList();
-      renderMessages();
+      if (activeId === chat.id) renderMessages();
       await persist();
-      elements.prompt.focus();
     }
   }
 
