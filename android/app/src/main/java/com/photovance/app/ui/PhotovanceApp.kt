@@ -24,8 +24,8 @@ fun PhotovanceApp(studio: StudioViewModel) {
         mutableStateOf(preferences.getString("appearance", AppAppearance.System.name) ?: AppAppearance.System.name)
     }
     val appearance = AppAppearance.entries.firstOrNull { it.name == appearanceName } ?: AppAppearance.System
-    var guest by rememberSaveable { mutableStateOf(false) }
     var settings by rememberSaveable { mutableStateOf(false) }
+    var linkAccount by rememberSaveable { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(studio.message) {
         studio.message?.let { message ->
@@ -34,13 +34,15 @@ fun PhotovanceApp(studio: StudioViewModel) {
         }
     }
     val currentUser by studio.currentUser.collectAsState()
-    val canGoBack = (guest || currentUser != null) && !settings
+    val canGoBack = (currentUser != null || linkAccount) && !settings
     BackHandler(canGoBack) {
         if (!studio.isGenerating) {
             if (studio.step > 0) {
                 studio.goToStep(studio.step - 1)
-            } else if (guest) {
-                guest = false
+            } else if (linkAccount) {
+                linkAccount = false
+            } else if (currentUser != null && !currentUser.isGuest) {
+                studio.authRepository.signOut()
             }
         }
     }
@@ -48,12 +50,19 @@ fun PhotovanceApp(studio: StudioViewModel) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Box(Modifier.fillMaxSize().safeDrawingPadding(), contentAlignment = Alignment.TopCenter) {
                 Box(Modifier.widthIn(max = 600.dp).fillMaxSize()) {
-                    if (guest || currentUser != null) {
+                    if (linkAccount) {
+                        AuthScreen(
+                            authRepository = studio.authRepository,
+                            onGuest = { linkAccount = false },
+                            onSettings = { settings = true },
+                            startWithSignUp = true
+                        )
+                    } else if (currentUser != null) {
                         HomeScreen(studio, onSettings = { settings = true })
                     } else {
                         AuthScreen(
                             authRepository = studio.authRepository,
-                            onGuest = { studio.authRepository.signInAsGuest(); guest = true },
+                            onGuest = {},
                             onSettings = { settings = true }
                         )
                     }
@@ -63,7 +72,10 @@ fun PhotovanceApp(studio: StudioViewModel) {
             if (settings) SettingsSheet(studio, appearance, onAppearance = {
                 appearanceName = it.name
                 preferences.edit().putString("appearance", it.name).apply()
-            }, onDismiss = { settings = false })
+            }, onDismiss = { settings = false }, onLinkAccount = {
+                settings = false
+                linkAccount = true
+            })
         }
     }
 }

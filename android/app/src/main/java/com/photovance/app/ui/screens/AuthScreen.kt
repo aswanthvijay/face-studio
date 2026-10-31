@@ -30,16 +30,19 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.photovance.app.R
+import com.photovance.app.auth.AuthState
 import com.photovance.app.auth.AuthRepository
 import com.photovance.app.ui.components.*
+import kotlinx.coroutines.launch
 
 @Composable
 fun AuthScreen(
     authRepository: AuthRepository? = null,
     onGuest: () -> Unit,
-    onSettings: () -> Unit
+    onSettings: () -> Unit,
+    startWithSignUp: Boolean = false
 ) {
-    var signUp by rememberSaveable { mutableStateOf(false) }
+    var signUp by rememberSaveable(startWithSignUp) { mutableStateOf(startWithSignUp) }
     BackHandler(signUp) { signUp = false }
     Column(Modifier.fillMaxSize()) {
         StudioHeader(onSettings, onExplore = onGuest)
@@ -51,7 +54,7 @@ fun AuthScreen(
 // Overload for backwards compatibility with tests
 @Composable
 fun AuthScreen(onGuest: () -> Unit, onSettings: () -> Unit) {
-    AuthScreen(null, onGuest, onSettings)
+    AuthScreen(null, onGuest, onSettings, false)
 }
 
 @Composable
@@ -71,6 +74,9 @@ private fun AuthenticationForm(
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
+    val scope = rememberCoroutineScope()
+    val authState by authRepository?.authState?.collectAsState()
+        ?: remember { mutableStateOf(AuthState.Idle) }
 
     var name by rememberSaveable { mutableStateOf("") }
     var email by rememberSaveable { mutableStateOf("") }
@@ -106,11 +112,23 @@ private fun AuthenticationForm(
             Text(if (signUp) "A little inspiration. Endless possibilities." else "Your next look starts here.",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Text("SIGN-IN PREVIEW", style = MaterialTheme.typography.labelSmall,
+        Text("YOUR ACCOUNT", style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.primary, letterSpacing = 1.6.sp)
         Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            ProviderButton("Continue with Google", google = true) { notice = "Google sign-in" }
-            ProviderButton("Continue with Apple", google = false) { notice = "Apple sign-in" }
+            ProviderButton("Continue with Google") {
+                if (activity == null || authRepository == null) {
+                    notice = "Google sign-in is unavailable on this screen."
+                } else {
+                    scope.launch {
+                        try {
+                            authRepository.signInWithGoogle(activity)
+                            onGuest()
+                        } catch (error: Exception) {
+                            notice = error.message ?: "Google sign-in failed."
+                        }
+                    }
+                }
+            }
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             HorizontalDivider(Modifier.weight(1f), color = MaterialTheme.colorScheme.outlineVariant)
@@ -137,8 +155,23 @@ private fun AuthenticationForm(
             StudioButton("Send 6-Digit SMS Code", onClick = {
                 attempted = true
                 if (validPhone) {
-                    verificationId = "verif_${System.currentTimeMillis()}"
-                    showOtpDialog = true
+                if (activity == null || authRepository == null) {
+                    notice = "Phone sign-in is unavailable on this screen."
+                } else {
+                    authRepository.sendPhoneOtp(phone, activity) { success, result ->
+                        if (success) {
+                            val codeSent = authRepository.authState.value as? AuthState.CodeSent
+                            if (codeSent != null) {
+                                verificationId = codeSent.verificationId
+                                showOtpDialog = true
+                            } else if (authRepository.currentUser.value != null) {
+                                onGuest()
+                            }
+                        } else {
+                            notice = result ?: "Could not send the verification code."
+                        }
+                    }
+                }
                 }
             })
             TextButton(onClick = { showPhoneAuth = false }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
@@ -175,18 +208,25 @@ private fun AuthenticationForm(
             StudioButton(if (signUp) "Create account" else "Log in", onClick = {
                 attempted = true
                 if (validEmail && validPassword && (!signUp || name.isNotBlank())) {
-                    authRepository?.signInWithGoogle("token", email, name)
-                    notice = if (signUp) "Create account" else "Email sign-in"
+                    if (authRepository == null) {
+                        notice = "Account sign-in is unavailable on this screen."
+                    } else if (signUp) {
+                        authRepository.createEmailAccount(name, email, password) { success, result ->
+                            if (success) {
+                                result?.let { notice = it }
+                                onGuest()
+                            } else {
+                                notice = result ?: "Could not create the account."
+                            }
+                        }
+                    } else {
+                        authRepository.signInWithEmail(email, password) { success, result ->
+                            if (success) onGuest() else notice = result ?: "Email sign-in failed."
+                        }
+                    }
                 }
             })
             if (!signUp) {
-                StudioOutlineButton("Email me a sign-in link", onClick = {
-                    attempted = true
-                    if (validEmail) {
-                        authRepository?.sendEmailMagicLink(email) { _, _ -> }
-                        notice = "Email sign-in link"
-                    }
-                }, icon = Icons.Default.MarkEmailUnread)
                 StudioOutlineButton("Sign in with Phone Number (SMS)", onClick = {
                     showPhoneAuth = true
                     attempted = false
@@ -199,23 +239,46 @@ private fun AuthenticationForm(
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         StudioOutlineButton("Explore as a guest", onClick = {
-            authRepository?.signInAsGuest()
-            onGuest()
+            if (authRepository == null) {
+                notice = "Guest access is unavailable on this screen."
+            } else {
+                authRepository.signInAsGuest { success, result ->
+                    if (success) onGuest() else notice = result ?: "Guest sign-in failed."
+                }
+            }
         }, icon = Icons.AutoMirrored.Filled.ArrowForward)
-        Text("Account features are preview only. Guest access opens the photo studio.",
+        Text("Your photos stay on your chosen studio server. Sign in or continue as a guest.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (authState is AuthState.Loading) {
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+        }
+        (authState as? AuthState.Error)?.let { state ->
+            Text(state.message, color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall)
+        }
     }
 
     if (notice != null) AlertDialog(onDismissRequest = { notice = null },
-        title = { Text("${notice} is coming soon") },
-        text = { Text("This design preview doesn't create accounts or send sign-in emails. You can explore the studio as a guest.") },
-        confirmButton = { TextButton(onClick = { notice = null; onGuest() }) { Text("Explore as a guest") } },
-        dismissButton = { TextButton(onClick = { notice = null }) { Text("Back") } })
+        title = { Text("Photovance account") },
+        text = { Text(notice.orEmpty()) },
+        confirmButton = { TextButton(onClick = { notice = null }) { Text("OK") } })
 
     if (recovery) AlertDialog(onDismissRequest = { recovery = false },
         title = { Text("Reset your password") },
-        text = { Text("Password reset will be available when account sign-in launches. This preview hasn't created an account or saved your password.") },
-        confirmButton = { TextButton(onClick = { recovery = false; onGuest() }) { Text("Explore as a guest") } },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("We’ll send a password reset email to the address above.")
+                Text(email, style = MaterialTheme.typography.bodyMedium)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                authRepository?.sendPasswordReset(email) { success, result ->
+                    notice = if (success) result else result ?: "Could not send the password reset email."
+                }
+                recovery = false
+            }, enabled = validEmail) { Text("Send email") }
+        },
         dismissButton = { TextButton(onClick = { recovery = false }) { Text("Back") } })
 
     if (showOtpDialog) {
@@ -224,7 +287,7 @@ private fun AuthenticationForm(
             title = { Text("Enter 6-Digit SMS Code") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("We sent an SMS code to $phone. Enter it below to sign in:")
+                    Text("Enter the code sent to $phone.")
                     OutlinedTextField(
                         value = otpCode,
                         onValueChange = { if (it.length <= 6) otpCode = it },
@@ -238,10 +301,16 @@ private fun AuthenticationForm(
             },
             confirmButton = {
                 Button(onClick = {
-                    if (otpCode.length == 6) {
-                        authRepository?.verifyPhoneOtp(verificationId, otpCode) { _, _ -> }
-                        showOtpDialog = false
-                        onGuest()
+                    if (otpCode.length == 6 && authRepository != null) {
+                        authRepository.verifyPhoneOtp(verificationId, otpCode) { success, result ->
+                            if (success) {
+                                showOtpDialog = false
+                                result?.let { notice = it }
+                                onGuest()
+                            } else {
+                                notice = result ?: "Phone verification failed."
+                            }
+                        }
                     }
                 }) {
                     Text("Verify & Sign In")
@@ -255,11 +324,10 @@ private fun AuthenticationForm(
 }
 
 @Composable
-private fun ProviderButton(label: String, google: Boolean, onClick: () -> Unit) {
+private fun ProviderButton(label: String, onClick: () -> Unit) {
     OutlinedButton(onClick, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
         shape = MaterialTheme.shapes.small, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-        if (google) Image(painterResource(R.drawable.ic_google), null, Modifier.size(22.dp))
-        else Icon(painterResource(R.drawable.ic_apple), null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurface)
+        Image(painterResource(R.drawable.ic_google), null, Modifier.size(22.dp))
         Spacer(Modifier.width(12.dp))
         Text(label, color = MaterialTheme.colorScheme.onSurface)
     }

@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+node_modules/
 .env
 .env.*
 !.env.example
@@ -11,6 +12,7 @@ venv/
 *.pem
 android/local.properties
 android/signing.properties
+android/app/google-services.json
 **/.gradle/
 **/build/
 /build/windows/

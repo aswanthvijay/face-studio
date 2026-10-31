@@ -1,6 +1,7 @@
 package com.photovance.app.ui
 
 import android.app.Application
+import android.app.Activity
 import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -42,8 +43,11 @@ data class Creation(
     val mode: String? = null
 )
 
-class StudioViewModel(application: Application) : AndroidViewModel(application) {
-    val authRepository: AuthRepository = PhotovanceAuthRepository(application)
+class StudioViewModel(
+    application: Application,
+    authRepositoryOverride: AuthRepository? = null
+) : AndroidViewModel(application) {
+    val authRepository: AuthRepository = authRepositoryOverride ?: PhotovanceAuthRepository(application)
     val hybridRouter: HybridStudioRouter = HybridStudioRouter(application)
     val billingManager: BillingManager = BillingManager(application)
     val currentUser = authRepository.currentUser
@@ -167,14 +171,23 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     fun checkConnection(url: String? = null) {
         if (checkingConnection || isGenerating) return
+        if (url == null && ApiClient.baseUrl.isBlank()) {
+            online = false
+            return
+        }
         if (url != null) {
             val parsed = url.trim().toHttpUrlOrNull()
             if (parsed == null || parsed.username.isNotEmpty() || parsed.password.isNotEmpty() ||
                 parsed.query != null || parsed.fragment != null) {
-                message = "Enter a valid http:// or https:// studio address."
+                message = "Enter a valid HTTPS studio address."
                 return
             }
-            ApiClient.saveBaseUrl(getApplication(), parsed.toString())
+            try {
+                ApiClient.saveBaseUrl(getApplication(), parsed.toString())
+            } catch (failure: IllegalArgumentException) {
+                message = failure.message ?: "Studio addresses must use HTTPS."
+                return
+            }
             uploadedId = null
             originalUrl = null
         }
@@ -226,19 +239,17 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         showPaywall = false
     }
 
-    fun subscribeVip(plan: VipPlan) {
-        billingManager.subscribe(plan)
-        showPaywall = false
-        message = "Welcome to Photovance VIP Studio!"
+    fun subscribeVip(activity: Activity, plan: VipPlan) {
+        billingManager.subscribe(activity, plan) { success, result ->
+            if (success) showPaywall = false
+            message = result
+        }
     }
 
     fun restorePurchases() {
-        val restored = billingManager.restorePurchases()
-        if (restored) {
-            showPaywall = false
-            message = "VIP Studio subscription restored!"
-        } else {
-            message = "No active subscription found."
+        billingManager.restorePurchases { restored, result ->
+            if (restored) showPaywall = false
+            message = result
         }
     }
 
@@ -364,5 +375,11 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 message = if (share) "Couldn't share this photo. Try again." else "Couldn't save this photo. Try again."
             } finally { isExporting = false }
         }
+    }
+
+    override fun onCleared() {
+        authRepository.close()
+        billingManager.close()
+        super.onCleared()
     }
 }

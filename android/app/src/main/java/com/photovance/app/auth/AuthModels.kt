@@ -23,8 +23,7 @@ sealed class AuthState {
 
 enum class AuthProviderType {
     GOOGLE,
-    APPLE,
-    EMAIL_MAGIC_LINK,
+    EMAIL_PASSWORD,
     PHONE_SMS,
     GUEST
 }

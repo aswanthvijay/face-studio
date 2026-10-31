@@ -1,0 +1,20 @@
+{
+  "name": "photovance-firebase-functions",
+  "private": true,
+  "engines": {
+    "node": "20"
+  },
+  "main": "index.js",
+  "scripts": {
+    "lint": "node --check index.js && node --check entitlement.js && node --check test.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.10.0",
+    "firebase-functions": "^7.4.0",
+    "googleapis": "^175.0.0"
+  },
+  "overrides": {
+    "uuid": "^11.1.1"
+  }
+}

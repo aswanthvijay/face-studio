@@ -34,11 +34,12 @@ interface ApiService {
 object ApiClient {
     private const val PREFS_NAME = "photovance_prefs"
     private const val KEY_BASE_URL = "base_url"
-    const val DEFAULT_URL = "http://192.168.1.230:7870/"
+    private val LOOPBACK_HOSTS = setOf("localhost", "127.0.0.1", "::1", "[::1]", "10.0.2.2")
+    const val DEFAULT_URL = ""
 
     var baseUrl: String = DEFAULT_URL
         set(value) {
-            field = if (value.endsWith("/")) value else "$value/"
+            field = if (value.isBlank()) "" else if (value.endsWith("/")) value else "$value/"
             retrofitInstance = null
             apiServiceInstance = null
         }
@@ -46,16 +47,23 @@ object ApiClient {
     fun init(context: Context) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val saved = prefs.getString(KEY_BASE_URL, null)
-        // Migrate the old emulator default; preserve custom server addresses.
-        if (saved?.trimEnd('/') == "http://10.0.2.2:7870") {
-            saveBaseUrl(context, DEFAULT_URL)
-        } else if (!saved.isNullOrBlank()) {
-            baseUrl = saved
+        if (!saved.isNullOrBlank()) {
+            val parsed = saved.trim().toHttpUrlOrNull()
+            if (parsed != null && isAllowedUrl(parsed.scheme, parsed.host)) {
+                baseUrl = parsed.toString()
+            } else {
+                prefs.edit().remove(KEY_BASE_URL).apply()
+            }
         }
     }
 
     fun saveBaseUrl(context: Context, newUrl: String) {
-        val formatted = if (newUrl.endsWith("/")) newUrl else "$newUrl/"
+        val parsed = newUrl.trim().toHttpUrlOrNull()
+            ?: throw IllegalArgumentException("Enter a valid HTTPS studio address.")
+        if (!isAllowedUrl(parsed.scheme, parsed.host)) {
+            throw IllegalArgumentException("Studio addresses must use HTTPS. HTTP is allowed only for a local development server.")
+        }
+        val formatted = parsed.toString()
         baseUrl = formatted
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().putString(KEY_BASE_URL, formatted).apply()
@@ -79,6 +87,7 @@ object ApiClient {
     val api: ApiService
         get() {
             if (apiServiceInstance == null) {
+                check(baseUrl.isNotBlank()) { "Connect to a studio server before making requests." }
                 val retrofit = Retrofit.Builder()
                     .baseUrl(baseUrl)
                     .client(getOkHttpClient())
@@ -91,8 +100,12 @@ object ApiClient {
         }
 
     fun getFullUrl(relativeUrl: String): String {
+        check(baseUrl.isNotBlank()) { "Connect to a studio server before resolving photo addresses." }
         return baseUrl.toHttpUrl().resolve(relativeUrl)?.toString()
             ?: throw IllegalArgumentException("The studio returned an invalid photo address.")
     }
-}
 
+    private fun isAllowedUrl(scheme: String, host: String): Boolean =
+        scheme == "https" || (scheme == "http" && host in LOOPBACK_HOSTS)
+
+}
