@@ -11,6 +11,44 @@ Configure model paths in `core/config.py` for your machine and obtain the requir
 weights separately. The helpers in `scripts/` download supported model assets;
 model configuration, manifests, and licenses are included under `models/`.
 
+### Windows desktop app
+
+The desktop shell opens Face Studio in its own Windows window and adds multiple
+saved generation chats. Chats keep their own reference image, model, mode,
+garment target, variation count, prompts, and generated results. Chat history is
+stored locally in `%LOCALAPPDATA%\FaceStudio\chats.json`; chat images are kept in
+its `assets` folder and removed when no saved chat references them.
+
+1. Run `install_windows_app.bat` once to install the small WebView desktop dependency
+   into the Face Studio Python runtime.
+2. Run `run_windows_app.bat` to open the desktop app. The local image server is
+   started automatically when it is not already running. The app checks the
+   configured ComfyUI port, then common local ports 8189 and 8200, so it can
+   connect to an already-running ComfyUI instance on either port. Set
+   `FACE_STUDIO_BACKEND_PORT` to use a different local port.
+3. Optionally run `package_windows_app.bat` to build a distributable folder at
+   `dist\windows\FaceStudio`. Distribute the entire folder, not only the `.exe`;
+   the target PC still needs the Face Studio ComfyUI Python runtime, models, and
+   inference assets. Set `FACE_STUDIO_PYTHON` if that runtime is installed elsewhere.
+4. The Windows release workflow also builds `FaceStudio-Setup.exe`, a per-user
+   installer with Start menu and optional desktop shortcuts. It installs under
+   `%LOCALAPPDATA%\Programs\FaceStudio` and does not require administrator rights.
+   If Inno Setup 6 is installed locally, `package_windows_app.bat` builds this
+   installer alongside the portable app folder.
+
+Every update pushed to `main` triggers a versioned Windows prerelease. The desktop
+app checks GitHub Releases when it starts and also provides **Check for updates**.
+When a newer build is available, choose **Update now** to download and verify the
+installer checksum before opening the standard Windows setup wizard. The app only
+contacts GitHub for release metadata during an update check; photos and chat history
+remain local.
+
+The desktop app still requires the configured ComfyUI runtime, model files, and
+inference assets. It does not upload chats or photos to a third-party service.
+JPEG, PNG, and WebP uploads are supported. Files named `.CR2` are accepted when
+their contents are JPEG-encoded; actual camera RAW files must be exported to
+JPEG, PNG, or WebP before upload.
+
 For signed Android builds, copy `android/signing.properties.example` to
 `android/signing.properties`, enter your credentials, and supply your private
 keystore. You can also set `ANDROID_KEYSTORE_FILE`, `ANDROID_KEYSTORE_PASSWORD`,
@@ -31,12 +69,12 @@ the local `android/local.properties` file before building.
    - **RealVisXL V5.0**: High-speed benchmark for sharp all-rounder portrait generation.
    - **Flux-2-Klein 4B Turbo**: Unrestricted Diffusion Transformer with Qwen3 Heretic text encoder.
 2. **Dual Operation Modes**:
-   - **Mode 1: In-Place Outfit Swap**: Inpaints *only* the masked garment using Segformer clothing parsing and smart chin-line feathering. The original body, pose, background, and head remain 100% pixel-perfect.
-   - **Mode 2: Full Scene Generation**: Synthesizes a brand new editorial scene and outfit from prompt, then transplants 1:1 biometric identity with CodeFormer ($w=0.85$), luminance matching, and micro-pore reinjection.
-3. **100% Biometric Identity & Melanin Preservation**:
-   - Discrete Codebook Prior ($w=0.85$) + Inswapper 128.
-   - Perceptual lightness ($L^*$) matching eliminates dark muddy or bronze skin tone discoloration.
-   - High-frequency Gaussian spatial separation re-injects authentic camera skin pores ($0.35$ factor).
+   - **Mode 1: In-Place Outfit Swap**: Inpaints the detected garment with SegFormer parsing and a feathered boundary. Pixels outside the active edit mask are preserved; the feathered transition can also change.
+   - **Mode 2: Full Scene Generation**: Synthesizes a new editorial scene from the prompt, then transfers facial identity and calibrates face tone toward the reference while retaining most generated scene lighting.
+3. **Face Identity & Complexion Matching**:
+   - Uses face-restoration and identity-transfer models; similarity depends on the source photo and generated scene.
+   - Perceptual lightness ($L^*$) calibration anchors the transferred face to the reference complexion without discarding scene exposure.
+   - Optional high-frequency detail processing preserves natural-looking skin texture.
 4. **Zero-Pollution Prompting & Strict Negative Safeguards**:
    - User input prompt is strictly conditioned first with zero boilerplate pollution.
    - Melanin-anchored physical descriptors prevent stereotype hallucination (strict suppression of unwanted bindi, forehead dots, sindoor, and artificial plastic smoothing).
@@ -114,6 +152,6 @@ D:\face_studio\
 
 ## 🔒 Security & Privacy Architecture
 - **Offline GPU Execution**: All diffusion inference, face swapping, and clothing parsing run strictly on local hardware (NVIDIA RTX GPU).
-- **Ephemeral Storage**: Uploaded reference photos and masks are transiently processed and automatically cleaned up.
+- **Local Image Retention**: The desktop app stores chat reference and result images locally; temporary server uploads and outputs are automatically cleaned up.
 - **Encrypted in Transit**: Mobile traffic flows over TLS 1.3 / HTTPS via Cloudflare tunnels.
 - **Biometric Integrity**: Biometric facial embeddings are never stored permanently, monetized, or exported.

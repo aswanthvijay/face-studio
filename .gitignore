@@ -13,6 +13,8 @@ android/local.properties
 android/signing.properties
 **/.gradle/
 **/build/
+/build/windows/
+/dist/
 .idea/
 *.safetensors
 *.ckpt

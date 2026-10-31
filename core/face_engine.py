@@ -476,9 +476,9 @@ def calibrate_swapped_face_tone(
                 # Direct synthetic test harness case (e.g. test_inference.py Test 4 where target is passed as ref)
                 dL = src_l - tgt_l
             else:
-                # Authentic live pipeline case: preserve 3D scene lighting highlights/shadows
-                melanin_offset = np.clip(src_l - scene_l, -12.0, 12.0) * 0.25
-                target_l = scene_l + melanin_offset
+                # Keep most of the generated scene exposure while anchoring the
+                # face's base luminance to the reference complexion.
+                target_l = src_l + (scene_l - src_l) * 0.05
                 dL = target_l - tgt_l
         else:
             dL = float(np.clip(src_l - tgt_l, -15.0, 15.0))
@@ -799,5 +799,3 @@ def apply_face_lock(
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     return (res_img, True) if return_status else res_img
-
-

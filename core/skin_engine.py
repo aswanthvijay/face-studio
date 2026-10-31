@@ -120,12 +120,19 @@ def extract_universal_skin_profile(
     roi_hsv_list = []
     roi_ycrcb_list = []
 
-    if detected_faces and len(detected_faces) > 0:
-        f = detected_faces[0]
-        bx, by, bw, bh = f["box"]
-        eye_y = f.get("eye_y", by + bh * 0.40)
-        mouth_y = f.get("mouth_y", by + bh * 0.70)
-        chin_y = f.get("chin_y", by + bh * 0.88)
+    if detected_faces or face_bbox is not None:
+        if detected_faces:
+            f = detected_faces[0]
+            bx, by, bw, bh = f["box"]
+            eye_y = f.get("eye_y", by + bh * 0.40)
+            mouth_y = f.get("mouth_y", by + bh * 0.70)
+        else:
+            x1, y1, x2, y2 = [float(v) for v in face_bbox[:4]]
+            bx, by = x1, y1
+            bw, bh = max(1.0, x2 - x1), max(1.0, y2 - y1)
+            eye_y = by + bh * 0.40
+            mouth_y = by + bh * 0.70
+        chin_y = f.get("chin_y", by + bh * 0.88) if detected_faces else by + bh * 0.88
         cx = int(bx + bw / 2.0)
 
         # 1. Forehead region (strictly excludes hairline and eyebrows)
@@ -133,6 +140,8 @@ def extract_universal_skin_profile(
         fh_y2 = max(0, int(by + (eye_y - by) * 0.80))
         fh_x1 = max(0, int(cx - bw * 0.25))
         fh_x2 = min(w, int(cx + bw * 0.25))
+        fh_y1, fh_y2 = max(0, fh_y1), min(h, fh_y2)
+        fh_x1, fh_x2 = max(0, fh_x1), min(w, fh_x2)
         if fh_y2 > fh_y1 and fh_x2 > fh_x1:
             roi_lab_list.append(img_lab[fh_y1:fh_y2, fh_x1:fh_x2].reshape(-1, 3))
             roi_hsv_list.append(img_hsv[fh_y1:fh_y2, fh_x1:fh_x2].reshape(-1, 3))
@@ -144,13 +153,14 @@ def extract_universal_skin_profile(
         if chk_y2 > chk_y1:
             # Left cheek
             lc_x1 = max(0, int(cx - bw * 0.42))
-            lc_x2 = max(0, int(cx - bw * 0.12))
+            lc_x2 = min(w, int(cx - bw * 0.12))
+            chk_y1, chk_y2 = max(0, chk_y1), min(h, chk_y2)
             if lc_x2 > lc_x1:
                 roi_lab_list.append(img_lab[chk_y1:chk_y2, lc_x1:lc_x2].reshape(-1, 3))
                 roi_hsv_list.append(img_hsv[chk_y1:chk_y2, lc_x1:lc_x2].reshape(-1, 3))
                 roi_ycrcb_list.append(img_ycrcb[chk_y1:chk_y2, lc_x1:lc_x2].reshape(-1, 3))
             # Right cheek
-            rc_x1 = min(w, int(cx + bw * 0.12))
+            rc_x1 = max(0, int(cx + bw * 0.12))
             rc_x2 = min(w, int(cx + bw * 0.42))
             if rc_x2 > rc_x1:
                 roi_lab_list.append(img_lab[chk_y1:chk_y2, rc_x1:rc_x2].reshape(-1, 3))
@@ -300,6 +310,14 @@ def harmonize_unified_canvas_skin(
     if face_bbox is None:
         return (canvas_image, {}) if return_info else canvas_image
 
+    source_lab = None
+    if src_skin_profile is not None:
+        profile_lab = src_skin_profile.get("lab_mean")
+        if profile_lab is not None:
+            profile_lab = np.asarray(profile_lab, dtype=np.float32).reshape(-1)
+            if profile_lab.size == 3 and np.isfinite(profile_lab).all():
+                source_lab = profile_lab
+
     try:
         if clothing_labels is None:
             from core.clothing_engine import parse_clothing_labels
@@ -308,8 +326,11 @@ def harmonize_unified_canvas_skin(
             labels = clothing_labels
         if labels.shape[:2] != (h, w):
             labels = cv2.resize(labels, (w, h), interpolation=cv2.INTER_NEAREST)
-        from core.face_engine import extract_face_skin_profile
-        target, _ = extract_face_skin_profile(img_bgr, face_bbox)
+        if source_lab is not None:
+            target = source_lab
+        else:
+            from core.face_engine import extract_face_skin_profile
+            target, _ = extract_face_skin_profile(img_bgr, face_bbox)
     except Exception as error:
         print(f"[SkinEngine] Skin correction skipped without reliable segmentation: {error}")
         return (canvas_image, {}) if return_info else canvas_image

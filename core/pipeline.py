@@ -36,10 +36,11 @@ from core.face_engine import apply_face_lock
 
 SESSION = requests.Session()
 SESSION.trust_env = False
+WORKFLOW_TIMEOUT_SECONDS = 900
 
 
 def ensure_backend() -> bool:
-    """Verify ComfyUI backend is running on port 8189, or start it."""
+    """Verify ComfyUI is running on the configured port, or start it there."""
     try:
         res = SESSION.get(f"{config.BACKEND_URL}/system_stats", timeout=3)
         if res.status_code == 200:
@@ -63,7 +64,7 @@ def ensure_backend() -> bool:
             "-u",
             str(bootstrap),
             "--listen", "127.0.0.1",
-            "--port", "8189",
+            "--port", str(config.BACKEND_PORT),
             "--lowvram",
             "--reserve-vram", "1.5",
             "--enable-dynamic-vram",
@@ -97,7 +98,7 @@ def ensure_backend() -> bool:
         except requests.RequestException:
             time.sleep(2)
 
-    raise RuntimeError("Timed out waiting for local image engine on port 8189.")
+    raise RuntimeError(f"Timed out waiting for local image engine on port {config.BACKEND_PORT}.")
 
 
 def comfy_free_memory(unload_models: bool = True, free_memory: bool = True):
@@ -129,6 +130,15 @@ def upload_image(path: Path) -> str:
 def calculate_working_dimensions(orig_w: int, orig_h: int, target_size: int = 1024, aspect_ratio: str = "original", is_in_place: bool = False):
     """Scale source dimensions preserving aspect ratio using model-optimal buckets (multiple of 16)."""
     factor = float(target_size) / 1024.0
+    aspect_ratio = {
+        "9:16": "story",
+        "3:4": "portrait",
+        "4:5": "portrait_4_5",
+        "1:1": "square",
+        "5:4": "landscape_5_4",
+        "4:3": "landscape_4_3",
+        "16:9": "landscape_16_9",
+    }.get(aspect_ratio, aspect_ratio)
 
     if is_in_place:
         target_dim = float(target_size) * factor
@@ -141,8 +151,16 @@ def calculate_working_dimensions(orig_w: int, orig_h: int, target_size: int = 10
         base_w, base_h = 768, 1344
     elif aspect_ratio == "square":  # 1:1
         base_w, base_h = 1024, 1024
+    elif aspect_ratio == "portrait_4_5":  # 4:5
+        base_w, base_h = 832, 1024
     elif aspect_ratio in ("portrait", "editorial", "waist_up"):  # 3:4 / 4:5
         base_w, base_h = 896, 1152
+    elif aspect_ratio == "landscape_5_4":  # 5:4
+        base_w, base_h = 1024, 832
+    elif aspect_ratio == "landscape_4_3":  # 4:3
+        base_w, base_h = 1152, 896
+    elif aspect_ratio == "landscape_16_9":  # 16:9
+        base_w, base_h = 1344, 768
     else:
         aspect = orig_w / max(1, orig_h)
         if aspect <= 0.65:      # ~9:16
@@ -1503,8 +1521,19 @@ def execute_workflow(graph: dict, progress_cb=None) -> Image.Image:
     start_time = time.monotonic()
     while True:
         elapsed = round(time.monotonic() - start_time)
-        if elapsed > 300:
-            raise TimeoutError("Engine workflow execution timed out after 300 seconds.")
+        if elapsed > WORKFLOW_TIMEOUT_SECONDS:
+            try:
+                interrupt = SESSION.post(
+                    f"{config.BACKEND_URL}/interrupt",
+                    json={"prompt_id": prompt_id},
+                    timeout=5
+                )
+                interrupt.raise_for_status()
+            except requests.RequestException as error:
+                print(f"[Pipeline] Timed-out workflow cancellation failed for {prompt_id}: {error}")
+            raise TimeoutError(
+                f"Engine workflow execution timed out after {WORKFLOW_TIMEOUT_SECONDS} seconds."
+            )
         if progress_cb:
             progress_cb(f"Rendering photorealistic outfit... ({elapsed}s)")
 
@@ -1629,7 +1658,11 @@ def run_face_studio_pipeline(
     app, _, _, _, _ = get_face_modules()
     src_rgb = np.array(ImageOps.exif_transpose(source_image).convert("RGB"))
     src_bgr = cv2.cvtColor(src_rgb, cv2.COLOR_RGB2BGR)
-    cached_src_faces = detect_faces_robust(app, src_bgr)
+    cached_src_faces = sorted(
+        detect_faces_robust(app, src_bgr),
+        key=lambda face: (face.bbox[2] - face.bbox[0]) * (face.bbox[3] - face.bbox[1]),
+        reverse=True
+    )
     if cached_src_faces:
         src_face_bbox = cached_src_faces[0].bbox
     elif not is_in_place:
@@ -1871,9 +1904,14 @@ def run_face_studio_pipeline(
         if is_in_place and any(k in str(e).lower() for k in ["inpaint_", "fooocus", "missing_node", "not found", "class not found", "validation"]):
             print(f"[Pipeline] Custom inpainting node error ({e}). Retrying with native InpaintModelConditioning fallback...")
             active_prefer_native = True
-            graph, used_seed = make_graph(used_seed, prefer_native=True)
-            raw_rendered = execute_workflow(graph, progress_cb=progress_cb)
+            try:
+                graph, used_seed = make_graph(used_seed, prefer_native=True)
+                raw_rendered = execute_workflow(graph, progress_cb=progress_cb)
+            except Exception:
+                comfy_free_memory(unload_models=True, free_memory=True)
+                raise
         else:
+            comfy_free_memory(unload_models=True, free_memory=True)
             raise
 
     # Phase-Shift VRAM Relay: Free ComfyUI diffusion models from VRAM before starting FaceEngine / Post-processing

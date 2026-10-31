@@ -188,6 +188,10 @@ document.addEventListener('DOMContentLoaded', () => {
   // 3. Upload Event Handlers (Outfit dropzone & Tool dropzones)
   // -------------------------------------------------------------------------
   async function handleImageUpload(file) {
+    if (!file || file.size > 50 * 1024 * 1024) {
+      alert("Choose an image smaller than 50 MB.");
+      return;
+    }
     const formData = new FormData();
     formData.append('image', file);
     try {
@@ -197,7 +201,9 @@ document.addEventListener('DOMContentLoaded', () => {
       if (data.image_id) {
         setGlobalImage(data.image_id, data.source_url || data.image_url);
         if (previewOverlayTag && data.coverage !== undefined) {
-          previewOverlayTag.textContent = `Garment Mask: ${(data.coverage * 100).toFixed(0)}%`;
+          const faceCount = Number(data.faces_detected || 0);
+          const faceNote = faceCount > 1 ? ` · largest of ${faceCount} people` : "";
+          previewOverlayTag.textContent = `Garment Mask: ${(data.coverage * 100).toFixed(0)}%${faceNote}`;
         }
       } else {
         alert("Upload error: " + (data.error || "Failed to process image"));

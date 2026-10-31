@@ -1,8 +1,10 @@
 import os
+import threading
+import time
 from pathlib import Path
 
 # Workspace Root
-WORKSPACE_ROOT = Path(r"D:\face_studio").resolve()
+WORKSPACE_ROOT = Path(os.environ.get("FACE_STUDIO_WORKSPACE_ROOT", r"D:\face_studio")).resolve()
 IMAGE_AI_ROOT = Path(r"D:\Image AI L model").resolve()
 STABILITY_MATRIX_ROOT = Path(r"D:\Image AI\StabilityMatrix-win-x64").resolve()
 
@@ -32,7 +34,7 @@ CLIPSEG_DIR = Path(os.environ.get("FACE_STUDIO_CLIPSEG_DIR", WORKSPACE_ROOT / "m
 FACE_DETECTOR_PATH = ASSETS_DIR / "face_detection_yunet_2023mar.onnx" if (ASSETS_DIR / "face_detection_yunet_2023mar.onnx").exists() else (IMAGE_AI_ROOT / "assets" / "face_detection_yunet_2023mar.onnx")
 INSIGHTFACE_DIR = Path(os.environ.get("FACE_STUDIO_INSIGHTFACE_DIR", Path.home() / ".insightface" / "models"))
 LORA_DIR = STABILITY_MATRIX_ROOT / "Data" / "Models" / "Lora"
-LOCAL_LORA_DIR = WORKSPACE_ROOT / "models" / "loras"
+LOCAL_LORA_DIR = Path(os.environ.get("FACE_STUDIO_LOCAL_LORA_DIR", WORKSPACE_ROOT / "models" / "loras"))
 LOCAL_LORA_DIR.mkdir(parents=True, exist_ok=True)
 
 # VAE
@@ -42,7 +44,14 @@ QWEN_VAE = "qwen_image_2.1_vae_bf16.safetensors"
 ZIMAGE_VAE = "ae.safetensors"
 
 # Dynamic LoRA Registry
-def get_available_loras() -> dict:
+_LORA_CACHE_TTL_SECONDS = 30.0
+_LORA_CACHE_LOCK = threading.Lock()
+_LORA_CACHE_KEY = None
+_LORA_CACHE_TIME = 0.0
+_LORA_CACHE = {}
+
+
+def _scan_available_loras() -> dict:
     """Scan and list all available LoRA models from StabilityMatrix and local directory."""
     loras = {}
     known_metadata = {
@@ -170,6 +179,19 @@ def get_available_loras() -> dict:
                     item[opt_key] = meta[opt_key]
             loras[stem] = item
     return loras
+
+
+def get_available_loras() -> dict:
+    """Return cached LoRA metadata, refreshing after the short discovery interval."""
+    global _LORA_CACHE_KEY, _LORA_CACHE_TIME, _LORA_CACHE
+    cache_key = tuple(str(directory.resolve()) for directory in (LORA_DIR, LOCAL_LORA_DIR))
+    now = time.monotonic()
+    with _LORA_CACHE_LOCK:
+        if _LORA_CACHE_KEY != cache_key or now - _LORA_CACHE_TIME >= _LORA_CACHE_TTL_SECONDS:
+            _LORA_CACHE = _scan_available_loras()
+            _LORA_CACHE_KEY = cache_key
+            _LORA_CACHE_TIME = now
+        return {key: value.copy() for key, value in _LORA_CACHE.items()}
 
 
 def resolve_lora(lora_id: str, model_type: str) -> dict | None:

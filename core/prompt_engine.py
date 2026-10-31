@@ -283,7 +283,7 @@ def build_zero_pollution_prompt(
             elif re.search(r"\b(full[- ]body|head to toe|full[- ]length)\b", user_lower):
                 effective_framing = "full_body"
         frame_description = {
-            "full_body": "full-length photograph, complete head and outfit and shoes inside frame",
+            "full_body": "wide full-length fashion photograph, entire person shown head to toe with complete hairstyle, outfit hem, both legs, shoes, and floor visible; center the whole figure, keep the person comfortably small in the composition, and leave clear empty space above the head and below both feet",
             "portrait": "head and shoulders portrait photograph, complete head inside frame",
         }.get(effective_framing, "waist-up fashion photograph, complete head and torso inside frame")
         has_custom_lighting = bool(re.search(
@@ -312,7 +312,7 @@ def build_zero_pollution_prompt(
     # Safeguard against headless catalog shots and cut off heads (weighted heavily at start)
     if not is_in_place:
         if effective_framing == "full_body":
-            neg_items.append("(portrait:1.5), (headshot:1.6), (bust shot:1.5), (close up, extreme close up, tight headshot, macro shot, face zoomed in, cropped body, cropped dress, cutoff dress, cropped legs:1.5)")
+            neg_items.append("(portrait:1.5), (headshot:1.6), (bust shot:1.5), (close up, extreme close up, tight headshot, macro shot, face zoomed in, cropped body, cropped dress, cutoff dress, cropped legs, cropped feet, cut off feet, shoes out of frame, feet touching image edge:1.5)")
             neg_items.append("(mutated hands, deformed hands, fused fingers, extra fingers, missing fingers, malformed limbs, twisted wrists:1.45)")
 
         # Negative guards against disproportionate anatomy, thick necks, and perspective distortion
