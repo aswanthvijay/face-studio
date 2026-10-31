@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 from PIL import Image
@@ -14,6 +14,22 @@ from core.quality_checks import garment_color_check
 
 
 class PromptTests(unittest.TestCase):
+    def test_full_body_framing_requests_complete_figure_with_margin(self):
+        positive, negative = build_zero_pollution_prompt(
+            "emerald gown", mode="full_scene", framing="full_body"
+        )
+        self.assertIn("head to toe", positive)
+        self.assertIn("empty space above the head and below both feet", positive)
+        self.assertIn("floor visible", positive)
+        self.assertIn("cropped legs", negative)
+        self.assertIn("cropped feet", negative)
+
+    def test_numeric_aspect_ratio_aliases_use_the_matching_resolution_buckets(self):
+        source_size = (720, 1280)
+        self.assertEqual(pipeline.calculate_working_dimensions(*source_size, aspect_ratio="3:4"), (896, 1152))
+        self.assertEqual(pipeline.calculate_working_dimensions(*source_size, aspect_ratio="9:16"), (768, 1344))
+        self.assertEqual(pipeline.calculate_working_dimensions(*source_size, aspect_ratio="4:5"), (832, 1024))
+
     def test_explicit_lighting_and_expression_are_not_overridden(self):
         request = "black velvet gown, moody backlight, eyes closed, sultry expression"
         positive, _ = build_zero_pollution_prompt(request, mode="full_scene")
@@ -115,6 +131,21 @@ class ImageTests(ImageFixture, unittest.TestCase):
         self.assertLessEqual(int(np.max(np.abs(np.diff(delta[:,15:40],axis=0)))), 3)
         self.assertEqual(float(info["alpha_mask"][105,25]), 0.0)
 
+    def test_skin_profile_with_face_box_samples_skin_zones(self):
+        import cv2
+        rgb = np.full((200, 200, 3), [15, 20, 25], dtype=np.uint8)
+        rgb[39:68, 75:125] = [100, 70, 50]
+        rgb[83:109, 58:88] = [100, 70, 50]
+        rgb[83:109, 112:142] = [100, 70, 50]
+        rgb[66:110, 80:120] = [240, 240, 240]
+        profile = skin_engine.extract_universal_skin_profile(
+            Image.fromarray(rgb), face_bbox=[50, 30, 150, 150]
+        )
+        expected_l = cv2.cvtColor(
+            np.array([[[50, 70, 100]]], dtype=np.uint8), cv2.COLOR_BGR2LAB
+        )[0, 0, 0]
+        self.assertAlmostEqual(profile["luminance_l"], float(expected_l), delta=2.0)
+
     def test_hair_recovery_does_not_paste_dark_skin(self):
         labels = self.labels.copy()
         labels[5:20,40:120] = 2
@@ -129,6 +160,21 @@ class ImageTests(ImageFixture, unittest.TestCase):
         output = face_engine.calibrate_swapped_face_tone(noisy, self.rgb, self.face.bbox, self.face.bbox)
         np.testing.assert_array_equal(output[150:], noisy[150:])
         self.assertTrue(np.any(output[20:70, 60:100] != noisy[20:70, 60:100]))
+
+    def test_face_calibration_matches_reference_luminance_in_generated_scene(self):
+        import cv2
+        source = np.full((128, 128, 3), 60, dtype=np.uint8)
+        swapped = np.full((128, 128, 3), 190, dtype=np.uint8)
+        scene = np.full((128, 128, 3), 180, dtype=np.uint8)
+        bbox = [10, 10, 118, 118]
+        output = face_engine.calibrate_swapped_face_tone(
+            swapped, source, bbox, bbox, ref_bgr=scene
+        )
+        source_l = float(np.median(cv2.cvtColor(source, cv2.COLOR_BGR2LAB)[30:95, 30:95, 0]))
+        before_l = float(np.median(cv2.cvtColor(swapped, cv2.COLOR_BGR2LAB)[30:95, 30:95, 0]))
+        after_l = float(np.median(cv2.cvtColor(output, cv2.COLOR_BGR2LAB)[30:95, 30:95, 0]))
+        self.assertLess(abs(after_l - source_l), abs(before_l - source_l))
+        self.assertLess(abs(after_l - source_l), 10)
 
     def test_skin_colored_fabric_stays_protected(self):
         rgb = self.rgb.copy()
@@ -164,6 +210,48 @@ class ImageTests(ImageFixture, unittest.TestCase):
         outside = np.array(mask) == 0
         np.testing.assert_array_equal(np.array(output)[outside], self.rgb[outside])
         self.assertTrue(np.any(np.array(output)[115:145, 20:35] != self.rgb[115:145, 20:35]))
+
+    def test_harmonization_uses_input_skin_profile(self):
+        source_profile = {"lab_mean": np.array([150.0, 160.0, 140.0], dtype=np.float32)}
+        output, info = skin_engine.harmonize_unified_canvas_skin(
+            self.source,
+            face_bbox=self.face.bbox,
+            src_skin_profile=source_profile,
+            clothing_labels=self.labels,
+            return_info=True
+        )
+        np.testing.assert_allclose(info["target_lab"], source_profile["lab_mean"])
+        self.assertTrue(np.any(np.array(output)[115:145, 20:35] != self.rgb[115:145, 20:35]))
+
+
+class WorkflowExecutionTests(unittest.TestCase):
+    def test_slow_workflow_is_allowed_and_target_interrupted_on_timeout(self):
+        submitted = Mock(status_code=200)
+        submitted.json.return_value = {"prompt_id": "pending-prompt"}
+        interrupted = Mock(status_code=200)
+        session = Mock()
+        session.post.side_effect = [submitted, interrupted]
+        history = Mock()
+        history.json.return_value = {
+            "pending-prompt": {"status": {"completed": False}}
+        }
+        session.get.return_value = history
+
+        with patch.object(pipeline, "SESSION", session), \
+             patch.object(pipeline.time, "monotonic", side_effect=[0.0, 301.0, 901.0]), \
+             patch.object(pipeline.time, "sleep"):
+            with self.assertRaisesRegex(TimeoutError, "900 seconds"):
+                pipeline.execute_workflow({})
+
+        self.assertEqual(session.get.call_count, 1)
+        self.assertEqual(
+            session.post.call_args_list[1].args[0],
+            f"{config.BACKEND_URL}/interrupt"
+        )
+        self.assertEqual(
+            session.post.call_args_list[1].kwargs["json"],
+            {"prompt_id": "pending-prompt"}
+        )
 
 
 class PipelineTests(ImageFixture, unittest.TestCase):
@@ -240,6 +328,24 @@ class PipelineTests(ImageFixture, unittest.TestCase):
             self.run_pipeline(model_id="missing")
         pipeline.ensure_backend.assert_not_called()
 
+    def test_primary_workflow_failure_releases_backend_models(self):
+        self.render.side_effect = RuntimeError("workflow failed")
+        with self.assertRaisesRegex(RuntimeError, "workflow failed"):
+            self.run_pipeline(mode="full_scene")
+        pipeline.comfy_free_memory.assert_called_with(unload_models=True, free_memory=True)
+
+    def test_group_photo_uses_largest_face_consistently(self):
+        from core import quality_checks
+        small = SimpleNamespace(bbox=np.array([5, 5, 25, 25], dtype=np.float32))
+        large = SimpleNamespace(bbox=np.array([20, 20, 80, 90], dtype=np.float32))
+        with patch.object(face_engine, "get_face_modules", return_value=(object(), None, None, None, None)), \
+             patch.object(face_engine, "detect_faces_robust", return_value=[small, large]), \
+             patch.object(quality_checks, "face_similarity", return_value=0.9):
+            self.run_pipeline(mode="full_scene")
+        selected_faces = self.face_lock.call_args.kwargs["src_faces"]
+        self.assertIs(selected_faces[0], large)
+        self.assertIs(selected_faces[1], small)
+
 
 class ClothingMaskTests(unittest.TestCase):
     def test_clipseg_clothing_confidence_cannot_override_hand_protection(self):
@@ -290,6 +396,19 @@ class ClothingMaskTests(unittest.TestCase):
         self.assertGreater(array[180, 80], 200)
         self.assertEqual(array[45, 80], 0)
 
+    def test_all_detected_faces_are_protected_in_group_photos(self):
+        labels = np.full((280, 160), 4, dtype=np.uint8)
+        faces = [
+            {"box": (55, 15, 50, 65), "chin_y": 80, "eye_y": 40, "mouth_y": 65},
+            {"box": (20, 90, 35, 45), "chin_y": 130, "eye_y": 108, "mouth_y": 120},
+        ]
+        with patch.object(clothing_engine, "parse_clothing_labels", return_value=labels), \
+             patch.object(clothing_engine, "detect_face_landmarks", return_value=faces):
+            mask, _, _, _ = clothing_engine.generate_dress_mask(self.image)
+        result = np.asarray(mask)
+        self.assertEqual(result[47, 80], 0)
+        self.assertEqual(result[110, 37], 0)
+
     def test_requested_bare_midriff_is_preserved(self):
         mask, _, _, _ = clothing_engine.generate_dress_mask(self.image, prompt="crop top and skirt, bare midriff")
         self.assertEqual(np.array(mask)[180, 80], 0)
@@ -305,6 +424,13 @@ class ClothingMaskTests(unittest.TestCase):
 
 
 class QualityCheckTests(unittest.TestCase):
+    def test_green_garment_color_is_checked(self):
+        labels = np.full((50, 50), 7, dtype=np.uint8)
+        green = garment_color_check(Image.new("RGB", (50, 50), (0, 120, 70)), labels, "green")
+        red = garment_color_check(Image.new("RGB", (50, 50), (220, 30, 30)), labels, "green")
+        self.assertTrue(green["matches"])
+        self.assertFalse(red["matches"])
+
     def test_peach_is_distinguished_from_magenta(self):
         labels=np.full((50,50),7,dtype=np.uint8)
         peach=garment_color_check(Image.new("RGB",(50,50),(255,203,164)),labels,"peach")

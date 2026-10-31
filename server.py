@@ -12,7 +12,7 @@ import uuid
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, UnidentifiedImageError
 import requests
 
 ROOT = Path(__file__).resolve().parent
@@ -32,6 +32,26 @@ HISTORY_LOCK = threading.Lock()
 GPU_SEMAPHORE = threading.Semaphore(1)
 OUTFIT_PROGRESS = {}
 PROGRESS_LOCK = threading.Lock()
+BACKEND_STATUS_LOCK = threading.Lock()
+BACKEND_CONNECTED = False
+BACKEND_STATUS_POLL_SECONDS = 3
+
+
+def start_backend_status_monitor():
+    """Refresh backend health off the request path so status reads stay fast."""
+    def monitor_loop():
+        global BACKEND_CONNECTED
+        while True:
+            try:
+                response = requests.get(f"{config.BACKEND_URL}/system_stats", timeout=1.0)
+                connected = response.status_code == 200
+            except requests.RequestException:
+                connected = False
+            with BACKEND_STATUS_LOCK:
+                BACKEND_CONNECTED = connected
+            time.sleep(BACKEND_STATUS_POLL_SECONDS)
+
+    threading.Thread(target=monitor_loop, daemon=True).start()
 
 
 def set_outfit_progress(request_id, message):
@@ -85,6 +105,28 @@ def extract_request_image(data: dict) -> tuple[Image.Image, str]:
         if sample_path.exists():
             return ImageOps.exif_transpose(Image.open(sample_path)).convert("RGB"), "/samples/sample_model.png"
         raise ValueError("No input image specified.")
+
+
+def decode_uploaded_image(image_data: bytes) -> Image.Image:
+        """Decode supported raster uploads and apply EXIF orientation before processing."""
+        try:
+            with Image.open(io.BytesIO(image_data)) as decoded:
+                if decoded.format not in {"JPEG", "PNG", "WEBP"}:
+                    raise ValueError(
+                        f"Unsupported image format: {decoded.format or 'unknown'}. "
+                        "Use a JPEG, PNG, or WebP image; camera RAW files must be exported first."
+                    )
+                decoded.load()
+                return ImageOps.exif_transpose(decoded).convert("RGB")
+        except UnidentifiedImageError as error:
+            raise ValueError(
+                "The file is not a readable JPEG, PNG, or WebP image. "
+                "Camera RAW files must be exported to one of these formats first."
+            ) from error
+        except OSError as error:
+            raise ValueError(
+                "The image could not be decoded. Use a valid JPEG, PNG, or WebP file."
+            ) from error
 
 
 def start_cache_cleaner():
@@ -147,12 +189,8 @@ class FaceStudioHandler(BaseHTTPRequestHandler):
 
         # Fast Non-blocking API Status & Health Endpoint
         if path in ("/api/status", "/health", "/api/health"):
-            backend_ok = False
-            try:
-                r = requests.get(f"{config.BACKEND_URL}/system_stats", timeout=1.0)
-                backend_ok = (r.status_code == 200)
-            except Exception:
-                backend_ok = False
+            with BACKEND_STATUS_LOCK:
+                backend_ok = BACKEND_CONNECTED
 
             models_dict = {}
             models_list = []
@@ -260,7 +298,7 @@ class FaceStudioHandler(BaseHTTPRequestHandler):
         # /api/upload
         if path == "/api/upload":
             try:
-                img = None
+                image_data = None
                 content_type = self.headers.get("Content-Type", "")
 
                 if "application/json" in content_type:
@@ -268,22 +306,26 @@ class FaceStudioHandler(BaseHTTPRequestHandler):
                     raw_b64 = data.get("data") or data.get("image") or ""
                     if "," in raw_b64:
                         raw_b64 = raw_b64.split(",", 1)[1]
-                    img = ImageOps.exif_transpose(Image.open(io.BytesIO(base64.b64decode(raw_b64))))
+                    if raw_b64:
+                        image_data = base64.b64decode(raw_b64, validate=True)
                 elif "multipart/form-data" in content_type:
                     msg = email.message_from_bytes(b"Content-Type: " + content_type.encode("utf-8") + b"\r\n\r\n" + body)
                     payload = msg.get_payload()
                     if isinstance(payload, list):
                         for part in payload:
                             if hasattr(part, "get_filename") and part.get_filename():
-                                img = ImageOps.exif_transpose(Image.open(io.BytesIO(part.get_payload(decode=True))))
+                                image_data = part.get_payload(decode=True)
                                 break
                     elif hasattr(msg, "get_payload") and hasattr(msg, "get_filename") and msg.get_filename():
-                        img = ImageOps.exif_transpose(Image.open(io.BytesIO(msg.get_payload(decode=True))))
+                        image_data = msg.get_payload(decode=True)
 
-                if img is None:
+                if not image_data:
                     return self.send_json(400, {"error": "No valid image provided in upload"})
 
-                img = img.convert("RGB")
+                try:
+                    img = decode_uploaded_image(image_data)
+                except ValueError as error:
+                    return self.send_json(415, {"error": str(error)})
                 img_id = str(uuid.uuid4())[:10]
                 src_filename = f"src_{img_id}.png"
                 src_path = config.INPUTS_DIR / src_filename
@@ -305,7 +347,11 @@ class FaceStudioHandler(BaseHTTPRequestHandler):
                     "width": img.width,
                     "height": img.height,
                     "coverage": coverage,
-                    "faces_detected": len(faces)
+                    "faces_detected": len(faces),
+                    "warnings": (
+                        ["Multiple people detected; the largest detected person is used for face matching."]
+                        if len(faces) > 1 else []
+                    )
                 })
             except Exception as e:
                 return self.send_json(500, {"error": f"Upload processing failed: {str(e)}"})
@@ -598,6 +644,7 @@ class FaceStudioHandler(BaseHTTPRequestHandler):
 
 
 def main():
+    global BACKEND_CONNECTED
     print("======================================================================")
     print("            Face Studio & Photovance AI Server")
     print("======================================================================")
@@ -607,9 +654,12 @@ def main():
     try:
         ensure_backend()
         print(f"[OK] Local ComfyUI GPU backend connected at {config.BACKEND_URL}.")
+        with BACKEND_STATUS_LOCK:
+            BACKEND_CONNECTED = True
     except Exception as e:
         print(f"[Warning] Backend initialization error: {e}")
 
+    start_backend_status_monitor()
     start_cache_cleaner()
     print("[OK] Ephemeral cache cleaner active (24-hour TTL).")
 

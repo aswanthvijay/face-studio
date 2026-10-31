@@ -28,6 +28,8 @@ def garment_color_check(image: Image.Image, labels: np.ndarray, color: str) -> d
         matches = lightness < 45.0
     elif color in ("white", "ivory", "cream"):
         matches = lightness > 65.0 and saturation < 75.0
+    elif color in ("green", "emerald") and hue is not None:
+        matches = bool(35.0 <= hue <= 90.0 and saturation >= 30.0)
     elif color == "peach" and hue is not None:
         warmth = np.median(lab[:,:,1:][garment],axis=0)
         matches = bool(2.0 <= hue <= 25.0 and lightness > 45.0 and warmth[0] > 4.0 and warmth[1] > 8.0)

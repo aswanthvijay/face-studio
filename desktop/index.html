@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Face Studio Desktop</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">✦</div>
+        <div><strong>Face Studio</strong><small>Windows desktop</small></div>
+      </div>
+      <button id="newChat" class="new-chat">＋ <span>New chat</span></button>
+      <div class="section-title">YOUR CHATS</div>
+      <div id="chatList" class="chat-list"></div>
+      <div class="sidebar-footer">
+        <span class="status-dot"></span>
+        <span id="connectionStatus">Connecting to local studio…</span>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="active-title">
+          <strong id="chatTitle">New chat</strong>
+          <small>Private · generated on your local studio</small>
+        </div>
+        <div class="top-actions">
+          <span id="updateStatus" class="update-status" role="status">Update check pending</span>
+          <button id="checkUpdates" class="quiet-button update-button" type="button">Check for updates</button>
+          <button id="updateNow" class="quiet-button update-now hidden" type="button">Update now</button>
+          <button id="renameChat" class="quiet-button" title="Rename chat">Rename</button>
+          <button id="deleteChat" class="quiet-button danger" title="Delete chat">Delete</button>
+        </div>
+      </header>
+
+      <section id="messages" class="messages">
+        <div id="welcome" class="welcome">
+          <div class="welcome-heading">
+            <div class="welcome-icon">✦</div>
+            <div>
+              <span class="eyebrow">YOUR PRIVATE CREATIVE STUDIO</span>
+              <h1>What would you like to create?</h1>
+              <p>Choose a starting point, personalize the prompt, then add a reference photo.</p>
+            </div>
+          </div>
+          <div class="prompt-library-heading">
+            <strong>Start with a look</strong>
+            <span>Eight ideas · click to edit</span>
+          </div>
+          <div class="prompt-grid" aria-label="Prebuilt prompts">
+            <button class="prompt-card" type="button" data-prompt="An elegant emerald evening gown with subtle beadwork, refined silhouette, realistic flowing fabric, full-length fashion photograph in a soft neutral studio.">
+              <span class="prompt-card-icon">✧</span><strong>Emerald evening</strong><small>Beaded gown · studio</small>
+            </button>
+            <button class="prompt-card" type="button" data-prompt="A modern tailored navy pantsuit with a structured blazer, understated gold accents, natural fit and detailed fabric, polished fashion editorial.">
+              <span class="prompt-card-icon">◈</span><strong>Modern tailoring</strong><small>Navy suit · polished</small>
+            </button>
+            <button class="prompt-card" type="button" data-prompt="A rich burgundy velvet red-carpet gown with elegant draping, tasteful sparkle, realistic velvet texture and cinematic event lighting.">
+              <span class="prompt-card-icon">✦</span><strong>Red carpet</strong><small>Burgundy velvet · luxe</small>
+            </button>
+            <button class="prompt-card" type="button" data-prompt="A relaxed cream linen co-ord with a breathable button-front shirt and straight-leg trousers, natural wrinkles, soft daylight and an effortless summer look.">
+              <span class="prompt-card-icon">☼</span><strong>Linen co-ord</strong><small>Cream linen · relaxed</small>
+            </button>
+            <button class="prompt-card" type="button" data-prompt="A jewel-toned silk saree with a fine gold border, graceful drape, coordinated blouse and realistic woven fabric in a warm festive setting.">
+              <span class="prompt-card-icon">❋</span><strong>Festive silk</strong><small>Jewel tone · graceful</small>
+            </button>
+            <button class="prompt-card" type="button" data-prompt="Contemporary streetwear with a clean oversized jacket, layered neutral top and relaxed cargo trousers, authentic fabric details and an urban editorial mood.">
+              <span class="prompt-card-icon">⌁</span><strong>City streetwear</strong><small>Layered · modern</small>
+            </button>
+            <button class="prompt-card" type="button" data-prompt="A timeless black evening dress with a clean neckline, subtle jewelry, realistic tailored fabric and soft classic studio lighting.">
+              <span class="prompt-card-icon">◌</span><strong>Classic evening</strong><small>Black dress · timeless</small>
+            </button>
+            <button class="prompt-card" type="button" data-prompt="A refined ivory bridal look with delicate lace details, elegant full-length silhouette, natural fabric texture and soft romantic window light.">
+              <span class="prompt-card-icon">✿</span><strong>Ivory bridal</strong><small>Delicate lace · soft</small>
+            </button>
+          </div>
+          <div class="welcome-tip"><span>Tip</span> Prompts are editable. Your reference photo and generations stay on this device.</div>
+        </div>
+      </section>
+
+      <section class="composer-wrap">
+        <div id="attachment" class="attachment hidden">
+          <img id="attachmentPreview" alt="Selected reference photo">
+          <div><strong>Reference photo</strong><small id="attachmentName">Ready to use</small></div>
+          <button id="removeAttachment" class="remove-attachment" title="Remove photo">×</button>
+        </div>
+        <div class="options">
+          <label>Model<select id="modelSelect"><option value="">Loading models…</option></select></label>
+          <label>Mode<select id="modeSelect">
+            <option value="in_place_swap">Outfit swap · preserve original scene</option>
+            <option value="full_scene">Full scene · generate new scene</option>
+          </select></label>
+          <label>Target<select id="targetSelect">
+            <option value="dress">Dress / gown</option>
+            <option value="upper">Top / blouse</option>
+            <option value="lower">Bottoms / pants</option>
+            <option value="all">Full outfit</option>
+          </select></label>
+          <label>Variations<select id="variationSelect">
+            <option value="1">1 image</option><option value="2">2 images</option>
+            <option value="3">3 images</option><option value="4">4 images</option>
+          </select></label>
+          <label class="identity-option"><span>Face identity match</span><input id="faceIdEnabled" type="checkbox" checked></label>
+          <label class="fidelity-option">Likeness <span id="faceIdWeightValue">0.65</span>
+            <input id="faceIdWeight" type="range" min="0.40" max="0.75" step="0.05" value="0.65">
+          </label>
+        </div>
+        <div class="composer">
+          <input id="imageInput" type="file" accept="image/png,image/jpeg,image/webp,.cr2" hidden>
+          <button id="attachPhoto" class="attach-button" title="Attach a reference photo">＋</button>
+          <textarea id="promptInput" rows="2" placeholder="Describe an outfit or image to create…" aria-label="Describe your image"></textarea>
+          <button id="sendButton" class="send-button" title="Generate">↑</button>
+        </div>
+        <div class="composer-hint">Enter to generate · Shift+Enter for a new line · Your reference image stays attached to this chat</div>
+      </section>
+    </main>
+  </div>
+  <div id="toast" class="toast hidden" role="status"></div>
+  <script src="app.js"></script>
+</body>
+</html>

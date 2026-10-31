@@ -4,6 +4,7 @@ Mask estimates require visual review when changing garment silhouette or coverag
 """
 import os
 import re
+import threading
 import cv2
 import numpy as np
 import torch
@@ -36,6 +37,10 @@ _clothing_proc = None
 _clothing_model = None
 _clip_proc = None
 _clip_model = None
+_YUNET_DETECTOR = None
+_YUNET_DETECTOR_PATH = None
+_YUNET_INPUT_SIZE = None
+_YUNET_LOCK = threading.Lock()
 
 
 def get_clothing_parser():
@@ -74,6 +79,7 @@ def get_clipseg():
 
 def detect_face_landmarks(image: Image.Image) -> list:
     """Detect face landmarks using YuNet ONNX detector or InsightFace fallback for chin line protection."""
+    global _YUNET_DETECTOR, _YUNET_DETECTOR_PATH, _YUNET_INPUT_SIZE
     if config.FACE_DETECTOR_PATH.exists():
         try:
             scale = min(1.0, 1280 / max(image.size))
@@ -82,8 +88,18 @@ def detect_face_landmarks(image: Image.Image) -> list:
                 Image.Resampling.LANCZOS
             )
             pixels = cv2.cvtColor(np.asarray(preview.convert("RGB")), cv2.COLOR_RGB2BGR)
-            detector = cv2.FaceDetectorYN.create(str(config.FACE_DETECTOR_PATH), "", preview.size, 0.55, 0.3, 1000)
-            _, faces = detector.detect(pixels)
+            detector_path = str(config.FACE_DETECTOR_PATH)
+            with _YUNET_LOCK:
+                if _YUNET_DETECTOR is None or _YUNET_DETECTOR_PATH != detector_path:
+                    _YUNET_DETECTOR = cv2.FaceDetectorYN.create(
+                        detector_path, "", preview.size, 0.55, 0.3, 1000
+                    )
+                    _YUNET_DETECTOR_PATH = detector_path
+                    _YUNET_INPUT_SIZE = preview.size
+                elif _YUNET_INPUT_SIZE != preview.size:
+                    _YUNET_DETECTOR.setInputSize(preview.size)
+                    _YUNET_INPUT_SIZE = preview.size
+                _, faces = _YUNET_DETECTOR.detect(pixels)
             if faces is not None:
                 results = []
                 for face in faces:
@@ -219,6 +235,43 @@ def refine_foreground_hair(image: Image.Image, labels: np.ndarray, chin_y: float
     return refined
 
 
+def _detected_face_protection(
+    face: dict,
+    image_shape: tuple[int, int],
+    seg_face: np.ndarray,
+    clip_confident: np.ndarray,
+    wants_high_collar: bool
+) -> np.ndarray:
+    """Build a face/head safety region for each detected person in the image."""
+    h, w = image_shape
+    bx, by, bw, _ = face["box"]
+    chin_y = face["chin_y"]
+    center_x = bx + bw / 2.0
+    center_y = (by + chin_y) / 2.0
+    ellipse = np.zeros((h, w), dtype=np.uint8)
+    cv2.ellipse(
+        ellipse,
+        (int(center_x), int(center_y)),
+        (int(bw * 0.52), int((chin_y - by) * 0.58)),
+        0,
+        0,
+        360,
+        255,
+        -1
+    )
+    rows = np.arange(h)[:, None]
+    columns = np.arange(w)[None, :]
+    protect = ellipse > 0
+    protect |= (rows <= chin_y + (0 if wants_high_collar else 2)) & (
+        np.abs(columns - center_x) <= bw * 0.55
+    )
+    protect |= seg_face & (rows <= chin_y + 4) & (
+        np.abs(columns - center_x) <= bw * 0.65
+    )
+    protect &= ~((rows > chin_y) & clip_confident)
+    return protect
+
+
 def generate_fused_dress_mask(
     image: Image.Image,
     target: str = "dress",
@@ -340,29 +393,28 @@ def generate_fused_dress_mask(
 
     if faces_detected and keep_face:
         f = faces_detected[0]
-        bx, by, bw, bh = f["box"]
         chin_y = f["chin_y"]
-        fcx = bx + bw / 2.0
-        fcy = (by + chin_y) / 2.0
-        frx = int(bw * 0.52)
-        fry = int((chin_y - by) * 0.58)
-        face_ellipse = np.zeros((h, w), dtype=np.uint8)
-        cv2.ellipse(face_ellipse, (int(fcx), int(fcy)), (frx, fry), 0, 0, 360, 255, -1)
-        face_protect = (face_ellipse > 0)
-        # Protect head, cheeks, chin envelope down to chin_y + (0 if wants_high_collar else 2)
-        face_protect |= (np.arange(h)[:, None] <= (chin_y + (0 if wants_high_collar else 2))) & (np.abs(np.arange(w)[None, :] - fcx) <= (bw * 0.55))
-        # Protect SegFormer face above chin_y + 4 strictly within the facial column (prevents mislabeled shoulders from being shielded)
-        face_protect |= seg_face & (np.arange(h)[:, None] <= (chin_y + 4)) & (np.abs(np.arange(w)[None, :] - fcx) <= (bw * 0.65))
-        # Confident clothing detections below chin are never suppressed as face
-        face_protect &= ~((np.arange(h)[:, None] > chin_y) & clip_confident)
         try:
             contour = face_contour(img_work, f)
-            if contour is not None:
-                # Landmarks refine the jaw, not forehead/head protection. Their
-                # hull starts near the eyebrows and cannot own the whole head.
-                face_protect = contour | (face_protect & (np.arange(h)[:, None] <= f["mouth_y"]))
         except Exception as error:
             print(f"[ClothingEngine] Face contour unavailable: {error}")
+            contour = None
+
+        for face_index, detected_face in enumerate(faces_detected):
+            face_region = _detected_face_protection(
+                detected_face,
+                (h, w),
+                seg_face,
+                clip_confident,
+                wants_high_collar
+            )
+            if face_index == 0 and contour is not None:
+                # Landmarks refine the jaw, not forehead/head protection. Their
+                # hull starts near the eyebrows and cannot own the whole head.
+                face_region = contour | (
+                    face_region & (np.arange(h)[:, None] <= detected_face["mouth_y"])
+                )
+            face_protect |= face_region
     elif keep_face:
         face_y_indices = np.where(seg_face)[0]
         if len(face_y_indices) > 50:
@@ -825,4 +877,3 @@ def detect_dress_mask_flux(
         feather_sigma=feather_sigma,
         return_flux_image=return_flux_image
     )
-
