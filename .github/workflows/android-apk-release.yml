@@ -1,29 +1,33 @@
 name: Android APK preview
 
 on:
+  push:
+    branches:
+      - aswanthvijay-performance-review
   workflow_dispatch:
     inputs:
       version_name:
         description: Android version name
-        required: true
-        default: "1.0.0"
+        required: false
         type: string
       version_code:
         description: Android version code
-        required: true
-        default: "1"
+        required: false
         type: string
 
 permissions:
   contents: write
 
 concurrency:
-  group: android-apk-${{ inputs.version_name }}
+  group: android-apk-${{ inputs.version_name || github.ref }}
   cancel-in-progress: false
 
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
+    env:
+      VERSION_NAME: ${{ inputs.version_name || format('1.0.{0}', github.run_number) }}
+      VERSION_CODE: ${{ inputs.version_code || github.run_number }}
     steps:
       - uses: actions/checkout@v4
 
@@ -42,14 +46,12 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew --no-daemon \
-            -PandroidVersionName="${{ inputs.version_name }}" \
-            -PandroidVersionCode="${{ inputs.version_code }}" \
+            -PandroidVersionName="${VERSION_NAME}" \
+            -PandroidVersionCode="${VERSION_CODE}" \
             :app:testDebugUnitTest \
             :app:assembleDebug
 
       - name: Prepare release assets
-        env:
-          VERSION_NAME: ${{ inputs.version_name }}
         run: |
           mkdir -p dist/android
           cp android/app/build/outputs/apk/debug/app-debug.apk \
@@ -60,8 +62,8 @@ jobs:
       - name: Publish Android preview release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: android-v${{ inputs.version_name }}
-          name: Photovance Android Preview v${{ inputs.version_name }}
+          tag_name: android-v${{ env.VERSION_NAME }}
+          name: Photovance Android Preview v${{ env.VERSION_NAME }}
           prerelease: true
           make_latest: false
           body: |
@@ -69,5 +71,5 @@ jobs:
 
             This is a debug-signed preview, not a Play Store production release. Firebase project configuration and secure automatic Windows GPU pairing are not included yet. Sign-in, purchases, and image generation require the corresponding services to be configured.
           files: |
-            dist/android/photovance-android-${{ inputs.version_name }}.apk
-            dist/android/photovance-android-${{ inputs.version_name }}.apk.sha256
+            dist/android/photovance-android-${{ env.VERSION_NAME }}.apk
+            dist/android/photovance-android-${{ env.VERSION_NAME }}.apk.sha256
