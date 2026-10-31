@@ -251,6 +251,17 @@ class WindowsPackagingTests(unittest.TestCase):
         source = (Path(__file__).parent / "desktop" / "index.html").read_text(encoding="utf-8")
         self.assertEqual(len(re.findall(r'class="prompt-card"', source)), 8)
 
+    def test_windows_studio_has_clear_creation_steps_and_accessible_actions(self):
+        root = Path(__file__).parent / "desktop"
+        page = (root / "index.html").read_text(encoding="utf-8")
+        script = (root / "app.js").read_text(encoding="utf-8")
+        styles = (root / "style.css").read_text(encoding="utf-8")
+        self.assertIn('aria-label="How it works"', page)
+        self.assertIn('aria-label="Add a reference photo"', page)
+        self.assertIn('<span>Generate</span>', page)
+        self.assertIn('textContent = "Creating…"', script)
+        self.assertIn("@media (prefers-reduced-motion: reduce)", styles)
+
     def test_reference_images_in_messages_use_compact_thumbnail_sizing(self):
         root = Path(__file__).parent / "desktop"
         script = (root / "app.js").read_text(encoding="utf-8")

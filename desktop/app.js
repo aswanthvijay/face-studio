@@ -256,6 +256,7 @@
     chat.messages.push(userMessage, pending);
     elements.prompt.value = "";
     elements.send.disabled = true;
+    elements.send.querySelector("span").textContent = "Creating…";
     elements.updateNow.disabled = true;
     renderChatList();
     renderMessages();
@@ -322,6 +323,7 @@
     } finally {
       if (progressTimer) clearInterval(progressTimer);
       elements.send.disabled = false;
+      elements.send.querySelector("span").textContent = "Generate";
       elements.updateNow.disabled = false;
       renderChatList();
       renderMessages();
