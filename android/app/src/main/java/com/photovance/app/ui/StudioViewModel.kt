@@ -1,7 +1,6 @@
 package com.photovance.app.ui
 
 import android.app.Application
-import android.app.Activity
 import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -43,11 +42,8 @@ data class Creation(
     val mode: String? = null
 )
 
-class StudioViewModel(
-    application: Application,
-    authRepositoryOverride: AuthRepository? = null
-) : AndroidViewModel(application) {
-    val authRepository: AuthRepository = authRepositoryOverride ?: PhotovanceAuthRepository(application)
+class StudioViewModel(application: Application) : AndroidViewModel(application) {
+    val authRepository: AuthRepository = PhotovanceAuthRepository(application)
     val hybridRouter: HybridStudioRouter = HybridStudioRouter(application)
     val billingManager: BillingManager = BillingManager(application)
     val currentUser = authRepository.currentUser
@@ -171,23 +167,14 @@ class StudioViewModel(
 
     fun checkConnection(url: String? = null) {
         if (checkingConnection || isGenerating) return
-        if (url == null && ApiClient.baseUrl.isBlank()) {
-            online = false
-            return
-        }
         if (url != null) {
             val parsed = url.trim().toHttpUrlOrNull()
             if (parsed == null || parsed.username.isNotEmpty() || parsed.password.isNotEmpty() ||
                 parsed.query != null || parsed.fragment != null) {
-                message = "Enter a valid HTTPS studio address."
+                message = "Enter a valid http:// or https:// studio address."
                 return
             }
-            try {
-                ApiClient.saveBaseUrl(getApplication(), parsed.toString())
-            } catch (failure: IllegalArgumentException) {
-                message = failure.message ?: "Studio addresses must use HTTPS."
-                return
-            }
+            ApiClient.saveBaseUrl(getApplication(), parsed.toString())
             uploadedId = null
             originalUrl = null
         }
@@ -239,17 +226,19 @@ class StudioViewModel(
         showPaywall = false
     }
 
-    fun subscribeVip(activity: Activity, plan: VipPlan) {
-        billingManager.subscribe(activity, plan) { success, result ->
-            if (success) showPaywall = false
-            message = result
-        }
+    fun subscribeVip(plan: VipPlan) {
+        billingManager.subscribe(plan)
+        showPaywall = false
+        message = "Welcome to Photovance VIP Studio!"
     }
 
     fun restorePurchases() {
-        billingManager.restorePurchases { restored, result ->
-            if (restored) showPaywall = false
-            message = result
+        val restored = billingManager.restorePurchases()
+        if (restored) {
+            showPaywall = false
+            message = "VIP Studio subscription restored!"
+        } else {
+            message = "No active subscription found."
         }
     }
 
@@ -294,14 +283,31 @@ class StudioViewModel(
                     uploadedGarmentId = garmentUpload.imageId
                 }
 
+                val requestId = "req_" + System.currentTimeMillis() + "_" + (1000..9999).random()
                 progressLabel = if (requestedVariations > 1) "Generating $requestedVariations studio variations" else "Creating your new look"
-                val response = ApiClient.api.changeDress(ChangeDressRequest(
-                    imageId = checkNotNull(uploadedId), prompt = requestedPrompt,
-                    negativePrompt = requestedNegative, modelKey = requestedModel,
-                    mode = requestedMode, aspectRatio = requestedRatio, target = requestedTarget, keepFace = true,
-                    variations = requestedVariations, garmentId = uploadedGarmentId,
-                    loraId = requestedLoraId, loraWeight = requestedLoraWeight
-                ))
+                val progressPoll = launch {
+                    while (isActive) {
+                        delay(1200)
+                        try {
+                            val p = ApiClient.api.getOutfitProgress(requestId)
+                            if (!p.stage.isNullOrBlank()) {
+                                progressLabel = p.stage
+                            }
+                        } catch (_: Exception) {}
+                    }
+                }
+                val response = try {
+                    ApiClient.api.changeDress(ChangeDressRequest(
+                        requestId = requestId,
+                        imageId = checkNotNull(uploadedId), prompt = requestedPrompt,
+                        negativePrompt = requestedNegative, modelKey = requestedModel,
+                        mode = requestedMode, aspectRatio = requestedRatio, target = requestedTarget, keepFace = true,
+                        variations = requestedVariations, garmentId = uploadedGarmentId,
+                        loraId = requestedLoraId, loraWeight = requestedLoraWeight
+                    ))
+                } finally {
+                    progressPoll.cancel()
+                }
                 if (!response.success || response.resultUrl == null) {
                     throw IllegalStateException(response.error ?: "Couldn't create this look. Please try again.")
                 }
@@ -329,6 +335,18 @@ class StudioViewModel(
                 online = true
                 step = 2
             } catch (cancelled: CancellationException) { throw cancelled
+            } catch (failure: retrofit2.HttpException) {
+                val errJson = failure.response()?.errorBody()?.string() ?: ""
+                val parsedError = try {
+                    val obj = com.google.gson.JsonParser.parseString(errJson).asJsonObject
+                    if (obj.has("failure_reasons") && obj.getAsJsonArray("failure_reasons").size() > 0) {
+                        val reasons = obj.getAsJsonArray("failure_reasons").map { it.asString }
+                        "Generation failed:\n• " + reasons.joinToString("\n• ")
+                    } else if (obj.has("error")) {
+                        obj.get("error").asString
+                    } else null
+                } catch (_: Exception) { null }
+                error = parsedError ?: (failure.message ?: "Quality check rejected the outfit. Try adjusting the prompt or model.")
             } catch (failure: Exception) {
                 error = if (failure is IllegalStateException || failure is IllegalArgumentException) {
                     failure.message ?: "Couldn't create this look. Try again."
@@ -375,11 +393,5 @@ class StudioViewModel(
                 message = if (share) "Couldn't share this photo. Try again." else "Couldn't save this photo. Try again."
             } finally { isExporting = false }
         }
-    }
-
-    override fun onCleared() {
-        authRepository.close()
-        billingManager.close()
-        super.onCleared()
     }
 }

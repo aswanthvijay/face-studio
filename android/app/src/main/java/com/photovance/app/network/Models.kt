@@ -50,6 +50,7 @@ data class UploadResponse(
 )
 
 data class ChangeDressRequest(
+    @SerializedName("request_id") val requestId: String? = null,
     @SerializedName("image_id") val imageId: String,
     @SerializedName("prompt") val prompt: String,
     @SerializedName("negative_prompt") val negativePrompt: String,
@@ -66,6 +67,7 @@ data class ChangeDressRequest(
 )
 
 data class ChangeDressResponse(
+    @SerializedName("failure_reasons") val failureReasons: List<String>? = null,
     @SerializedName("success") val success: Boolean,
     @SerializedName("result_url") val resultUrl: String?,
     @SerializedName("preview_url") val previewUrl: String?,
@@ -93,3 +95,8 @@ data class SampleResponse(
     @SerializedName("height") val height: Int?
 )
 
+
+
+data class OutfitProgressResponse(
+    @SerializedName("stage") val stage: String?
+)

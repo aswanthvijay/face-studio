@@ -35,6 +35,7 @@ _FACE_HELPER = None
 _FALLBACK_RESTORER = None
 _MODULE_LOCK = threading.Lock()
 _DETECTOR_LOCK = threading.Lock()
+_CODEFORMER_LOCK = threading.Lock()
 
 
 def get_face_modules():
@@ -145,23 +146,19 @@ def reinject_micro_pores(
         if src_bgr is not None and src_bbox is not None:
             try:
                 sx1, sy1, sx2, sy2 = [int(v) for v in src_bbox]
-                sh_src, sw_src = src_bgr.shape[:2]
                 sx1, sy1 = max(0, sx1), max(0, sy1)
-                sx2, sy2 = min(sw_src, sx2), min(sh_src, sy2)
-                sw, sh = sx2 - sx1, sy2 - sy1
-                if sw > 20 and sh > 20:
-                    scx, scy = (sx1 + sx2) // 2, (sy1 + sy2) // 2
-                    src_oval = np.zeros((sh_src, sw_src), dtype=np.uint8)
-                    cv2.ellipse(src_oval, (scx, scy), (int(0.28 * sw), int(0.30 * sh)), 0, 0, 360, 1, -1)
-                    src_ycrcb = cv2.cvtColor(src_bgr, cv2.COLOR_BGR2YCrCb)
-                    src_cr = src_ycrcb[:, :, 1]
-                    src_cb = src_ycrcb[:, :, 2]
-                    src_skin = (src_oval == 1) & (src_cr >= 133) & (src_cr <= 173) & (src_cb >= 77) & (src_cb <= 127)
-                    src_gray = cv2.cvtColor(src_bgr, cv2.COLOR_BGR2GRAY)
-                    if np.count_nonzero(src_skin) > 50:
-                        src_lap = cv2.Laplacian(src_gray, cv2.CV_64F)
-                        target_var = float(np.var(src_lap[src_skin]))
-                        target_var = float(np.clip(target_var, 35.0, 240.0))
+                sx2, sy2 = min(src_bgr.shape[1], sx2), min(src_bgr.shape[0], sy2)
+                src_crop = src_bgr[sy1:sy2, sx1:sx2]
+                if src_crop.size > 0:
+                    sh, sw = src_crop.shape[:2]
+                    src_face_gray = cv2.cvtColor(src_crop, cv2.COLOR_BGR2GRAY)
+                    src_yc = cv2.cvtColor(src_crop, cv2.COLOR_BGR2YCrCb)
+                    inner_oval = np.zeros((sh, sw), dtype=np.uint8)
+                    cv2.ellipse(inner_oval, (sw // 2, sh // 2), (max(1, int(sw * 0.28)), max(1, int(sh * 0.30))), 0, 0, 360, 1, -1)
+                    skin_m = (inner_oval > 0) & (src_yc[:, :, 1] >= 133) & (src_yc[:, :, 1] <= 175) & (src_yc[:, :, 2] >= 77) & (src_yc[:, :, 2] <= 130) & (src_face_gray >= 45) & (src_face_gray <= 235)
+                    lap_s = cv2.Laplacian(src_face_gray, cv2.CV_64F)
+                    raw_var = float(np.var(lap_s[skin_m])) if np.count_nonzero(skin_m) >= 50 else float(lap_s.var())
+                    target_var = float(np.clip(raw_var, 35.0, 240.0))
             except Exception:
                 pass
         elif body_var is not None and body_var > 10.0:
@@ -404,7 +401,7 @@ def warp_back_128(
 
 
 def detect_faces_robust(app_or_bgr, img_bgr: np.ndarray = None) -> list:
-    """Detect faces using progressive resolution & threshold fallback (thread-safe, Bug B7)."""
+    """Thread-safe multi-scale, multi-threshold face detector for difficult lighting or angles (Bug B7)."""
     if img_bgr is None:
         bgr_image = app_or_bgr
         app = get_face_app()
@@ -412,37 +409,40 @@ def detect_faces_robust(app_or_bgr, img_bgr: np.ndarray = None) -> list:
         app = app_or_bgr if app_or_bgr is not None else get_face_app()
         bgr_image = img_bgr
 
-    if app is None or bgr_image is None or bgr_image.size == 0:
+    if app is None or bgr_image is None or getattr(bgr_image, "size", 0) == 0:
         return []
 
     with _DETECTOR_LOCK:
-        orig_size = getattr(app.det_model, "det_size", (640, 640))
-        orig_thresh = getattr(app.det_model, "det_thresh", 0.5)
-        configs = [
-            ((640, 640), 0.50),
-            ((1024, 1024), 0.40),
-            ((1280, 1280), 0.30),
-            ((640, 640), 0.25),
-        ]
-        faces = []
+        faces = app.get(bgr_image)
+        if faces:
+            return faces
+
+        det_model = getattr(app, "det_model", None)
+        if det_model is None:
+            return faces or []
+
+        orig_det_thresh = getattr(det_model, "det_thresh", 0.5)
+        orig_det_size = getattr(det_model, "det_size", (640, 640))
         try:
-            for det_size, det_thresh in configs:
-                try:
-                    app.det_model.det_size = det_size
-                    app.det_model.det_thresh = det_thresh
-                    faces = app.get(bgr_image)
-                    if faces:
-                        break
-                except Exception:
-                    continue
+            det_model.det_size = (1024, 1024)
+            faces = app.get(bgr_image)
+            if faces:
+                return faces
+
+            det_model.det_thresh = 0.35
+            faces = app.get(bgr_image)
+            if faces:
+                return faces
+
+            det_model.det_size = (512, 512)
+            faces = app.get(bgr_image)
+            return faces or []
         finally:
             try:
-                app.det_model.det_size = orig_size
-                app.det_model.det_thresh = orig_thresh
+                det_model.det_thresh = orig_det_thresh
+                det_model.det_size = orig_det_size
             except Exception:
                 pass
-        return faces
-
 
 def extract_face_skin_profile(face_bgr: np.ndarray, face_bbox: list) -> tuple[np.ndarray, np.ndarray]:
     """Extracts reference skin distribution (median L*, mean a*, b*, and std in CIE-LAB) trimmed to [15, 85] percentiles."""
@@ -513,8 +513,16 @@ def extract_face_skin_profile(face_bgr: np.ndarray, face_bbox: list) -> tuple[np
             lab_pixels = lab_pixels[trim_mask]
 
     med_l = float(np.median(lab_pixels[:, 0]))
-    mean_a = float(np.mean(lab_pixels[:, 1]))
-    mean_b = float(np.mean(lab_pixels[:, 2]))
+    if len(lab_pixels) >= 20:
+        a_low, a_high = np.percentile(lab_pixels[:, 1], [15, 85])
+        b_low, b_high = np.percentile(lab_pixels[:, 2], [15, 85])
+        a_trim = lab_pixels[:, 1][(lab_pixels[:, 1] >= a_low) & (lab_pixels[:, 1] <= a_high)]
+        b_trim = lab_pixels[:, 2][(lab_pixels[:, 2] >= b_low) & (lab_pixels[:, 2] <= b_high)]
+        mean_a = float(np.mean(a_trim)) if len(a_trim) > 0 else float(np.mean(lab_pixels[:, 1]))
+        mean_b = float(np.mean(b_trim)) if len(b_trim) > 0 else float(np.mean(lab_pixels[:, 2]))
+    else:
+        mean_a = float(np.mean(lab_pixels[:, 1]))
+        mean_b = float(np.mean(lab_pixels[:, 2]))
     ref_mean = np.array([med_l, mean_a, mean_b], dtype=np.float32)
 
     std_l = float(np.std(lab_pixels[:, 0]))
@@ -794,71 +802,72 @@ def apply_face_lock(
         effective_fidelity = min(0.50, effective_fidelity + 0.05)
 
     if codeformer_net is not None and face_helper is not None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        try:
-            from torchvision.transforms.functional import normalize
-            from codeformer.basicsr.utils import img2tensor, tensor2img
-
-            codeformer_net.to(device)
-            if hasattr(face_helper, "face_detector") and face_helper.face_detector is not None:
-                face_helper.face_detector.to(device)
-            if hasattr(face_helper, "face_parse") and face_helper.face_parse is not None:
-                face_helper.face_parse.to(device)
-            face_helper.device = device
-
-            face_helper.clean_all()
-            face_helper.read_image(swapped_bgr)
-            face_helper.get_face_landmarks_5(only_center_face=False, resize=640, eye_dist_threshold=5)
-            face_helper.align_warp_face()
-
-            if face_helper.cropped_faces:
-                for cropped_face in face_helper.cropped_faces:
-                    t = img2tensor(cropped_face / 255.0, bgr2rgb=True, float32=True)
-                    normalize(t, (0.5, 0.5, 0.5), (0.5, 0.5, 0.5), inplace=True)
-                    t = t.unsqueeze(0).to(device)
-                    with torch.no_grad():
-                        out = codeformer_net(t, w=effective_fidelity)[0]
-                        restored_face = tensor2img(out, rgb2bgr=True, min_max=(-1, 1))
-                    face_helper.add_restored_face(restored_face)
-
-                face_helper.get_inverse_affine(None)
-                restored_bgr = face_helper.paste_faces_to_input_image()
-
-                # Seamless face blend with landmark convex hull feathering
-                if face_blend_mask is None:
-                    if lmks is not None and len(lmks) >= 5:
-                        face_blend_mask = get_clean_face_hull_mask(restored_bgr.shape, lmks, erode_ratio=0.08)
-                    else:
-                        tx1, ty1, tx2, ty2 = [int(v) for v in tgt_face_for_swap.bbox]
-                        tw_f = max(1, tx2 - tx1)
-                        th_f = max(1, ty2 - ty1)
-                        face_blend_mask = np.zeros((restored_bgr.shape[0], restored_bgr.shape[1]), dtype=np.uint8)
-                        fcx = int((tx1 + tx2) / 2)
-                        fcy = int((ty1 + ty2) / 2)
-                        cv2.ellipse(face_blend_mask, (fcx, fcy), (int(tw_f * 0.48), int(th_f * 0.52)), 0, 0, 360, 255, -1)
-
-                restored_bgr = seamless_face_blend(
-                    swapped_face_bgr=restored_bgr,
-                    body_scene_bgr=tgt_bgr_for_swap,
-                    face_mask=face_blend_mask
-                )
-            else:
-                restored_bgr = swapped_bgr
-        except Exception as e:
-            print(f"[FaceEngine] CodeFormer restoration warning: {e}")
-            restored_bgr = swapped_bgr
-        finally:
+        with _CODEFORMER_LOCK:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
             try:
-                codeformer_net.to("cpu")
+                from torchvision.transforms.functional import normalize
+                from codeformer.basicsr.utils import img2tensor, tensor2img
+
+                codeformer_net.to(device)
                 if hasattr(face_helper, "face_detector") and face_helper.face_detector is not None:
-                    face_helper.face_detector.to("cpu")
+                    face_helper.face_detector.to(device)
                 if hasattr(face_helper, "face_parse") and face_helper.face_parse is not None:
-                    face_helper.face_parse.to("cpu")
-                face_helper.device = "cpu"
-            except Exception:
-                pass
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+                    face_helper.face_parse.to(device)
+                face_helper.device = device
+
+                face_helper.clean_all()
+                face_helper.read_image(swapped_bgr)
+                face_helper.get_face_landmarks_5(only_center_face=False, resize=640, eye_dist_threshold=5)
+                face_helper.align_warp_face()
+
+                if face_helper.cropped_faces:
+                    for cropped_face in face_helper.cropped_faces:
+                        t = img2tensor(cropped_face / 255.0, bgr2rgb=True, float32=True)
+                        normalize(t, (0.5, 0.5, 0.5), (0.5, 0.5, 0.5), inplace=True)
+                        t = t.unsqueeze(0).to(device)
+                        with torch.no_grad():
+                            out = codeformer_net(t, w=effective_fidelity)[0]
+                            restored_face = tensor2img(out, rgb2bgr=True, min_max=(-1, 1))
+                        face_helper.add_restored_face(restored_face)
+
+                    face_helper.get_inverse_affine(None)
+                    restored_bgr = face_helper.paste_faces_to_input_image()
+
+                    # Seamless face blend with landmark convex hull feathering
+                    if face_blend_mask is None:
+                        if lmks is not None and len(lmks) >= 5:
+                            face_blend_mask = get_clean_face_hull_mask(restored_bgr.shape, lmks, erode_ratio=0.08)
+                        else:
+                            tx1, ty1, tx2, ty2 = [int(v) for v in tgt_face_for_swap.bbox]
+                            tw_f = max(1, tx2 - tx1)
+                            th_f = max(1, ty2 - ty1)
+                            face_blend_mask = np.zeros((restored_bgr.shape[0], restored_bgr.shape[1]), dtype=np.uint8)
+                            fcx = int((tx1 + tx2) / 2)
+                            fcy = int((ty1 + ty2) / 2)
+                            cv2.ellipse(face_blend_mask, (fcx, fcy), (int(tw_f * 0.48), int(th_f * 0.52)), 0, 0, 360, 255, -1)
+
+                    restored_bgr = seamless_face_blend(
+                        swapped_face_bgr=restored_bgr,
+                        body_scene_bgr=tgt_bgr_for_swap,
+                        face_mask=face_blend_mask
+                    )
+                else:
+                    restored_bgr = swapped_bgr
+            except Exception as e:
+                print(f"[FaceEngine] CodeFormer restoration warning: {e}")
+                restored_bgr = swapped_bgr
+            finally:
+                try:
+                    codeformer_net.to("cpu")
+                    if hasattr(face_helper, "face_detector") and face_helper.face_detector is not None:
+                        face_helper.face_detector.to("cpu")
+                    if hasattr(face_helper, "face_parse") and face_helper.face_parse is not None:
+                        face_helper.face_parse.to("cpu")
+                    face_helper.device = "cpu"
+                except Exception:
+                    pass
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
     elif fallback_restorer is not None:
         try:

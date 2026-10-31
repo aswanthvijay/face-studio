@@ -59,6 +59,54 @@ import requests
 
 import torch
 
+class _MaxResult(tuple):
+    @property
+    def values(self):
+        return self[0]
+
+    @property
+    def indices(self):
+        return self[1]
+
+
+class _T(np.ndarray):
+    def sigmoid(self):
+        return 1.0 / (1.0 + np.exp(-np.asarray(self, dtype=np.float32)))
+
+    def max(self, dim=None, **kwargs):
+        vals = np.max(np.asarray(self), axis=dim).view(_T)
+        idxs = np.argmax(np.asarray(self), axis=dim).view(_T)
+        return _MaxResult((vals, idxs))
+
+    def numpy(self):
+        return np.asarray(self)
+
+
+class _TorchStub:
+    _MaxResult = _MaxResult
+    _T = _T
+
+    @staticmethod
+    def from_numpy(arr):
+        return np.asarray(arr).view(_T)
+
+    @staticmethod
+    def tensor(arr, **kwargs):
+        return np.asarray(arr).view(_T)
+
+    @staticmethod
+    def zeros(*args, **kwargs):
+        return np.zeros(*args).view(_T)
+
+    @staticmethod
+    def full(shape, val, **kwargs):
+        return np.full(shape, val).view(_T)
+
+    class no_grad:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+
+
 
 
 from core import config
@@ -3287,8 +3335,8 @@ def run_face_studio_pipeline(
 
     progress_cb = None,
 
-    negative_prompt: str = ""
-
+    negative_prompt: str = "",
+    custom_negative_prompt: str = None
 ) -> dict:
 
     """
@@ -3361,7 +3409,7 @@ def run_face_studio_pipeline(
 
             requested_variations, progress_cb, resolved_lora_filename, lora_weight,
 
-            target=target_garment)
+            target=target_garment, custom_negative_prompt=custom_negative_prompt or negative_prompt)
 
     ensure_backend()
 
@@ -3579,9 +3627,10 @@ def run_face_studio_pipeline(
 
     )
 
-    if negative_prompt and negative_prompt.strip():
-
-        neg_prompt = f"{negative_prompt.strip()}, {neg_prompt}" if neg_prompt else negative_prompt.strip()
+    custom_neg = custom_negative_prompt if custom_negative_prompt is not None else negative_prompt
+    if custom_neg and str(custom_neg).strip():
+        from core.prompt_engine import merge_negative_prompt
+        neg_prompt = merge_negative_prompt([neg_prompt, str(custom_neg).strip()], prompt)
 
 
 
@@ -3909,7 +3958,7 @@ def run_face_studio_pipeline(
 
     # Keep models resident in VRAM between iterations when variations > 1; unload only if single variation
 
-    comfy_free_memory(unload_models=False if variations > 1 else True, free_memory=True)
+    comfy_free_memory(unload_models=True if (not is_in_place and enable_face_id) or requested_variations <= 1 else False, free_memory=True)
 
     if torch.cuda.is_available():
 
@@ -4373,18 +4422,14 @@ def run_face_studio_pipeline(
 
             try:
 
+                comfy_free_memory(unload_models=False, free_memory=True)
                 if torch.cuda.is_available():
-
                     torch.cuda.empty_cache()
-
                 var_graph, var_seed = make_graph(random.randint(1, 2147483647))
 
                 var_raw = execute_workflow(var_graph, progress_cb=progress_cb)
 
-                if not is_in_place and enable_face_id:
-
-                    comfy_free_memory(unload_models=True, free_memory=True)
-
+                comfy_free_memory(unload_models=(v_idx == requested_variations - 1) or (not is_in_place and enable_face_id), free_memory=True)
                 var_final, var_swapped = process_output(var_raw)
 
                 if not is_in_place and enable_face_id and not var_swapped:
