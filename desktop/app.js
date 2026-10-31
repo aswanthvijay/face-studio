@@ -55,7 +55,7 @@
       target: "dress",
       variations: 1,
       enableFaceId: true,
-      faceIdWeight: 0.65
+      faceIdWeight: 0.80
     };
     chats.unshift(chat);
     selectChat(chat.id);
@@ -72,7 +72,7 @@
     elements.target.value = chat.target || "dress";
     elements.variations.value = String(chat.variations || 1);
     elements.faceIdEnabled.checked = chat.enableFaceId !== false;
-    elements.faceIdWeight.value = String(chat.faceIdWeight || 0.65);
+    elements.faceIdWeight.value = String(chat.faceIdWeight || 0.80);
     elements.faceIdWeightValue.textContent = Number(elements.faceIdWeight.value).toFixed(2);
     renderChatList();
     renderMessages();

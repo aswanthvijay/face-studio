@@ -385,7 +385,7 @@ class FaceStudioHandler(BaseHTTPRequestHandler):
                 source_image, source_url = extract_request_image(data)
 
                 enable_face_id = bool(data.get("enable_face_id", True))
-                face_id_weight = float(data.get("face_id_weight", 0.65))
+                face_id_weight = float(data.get("face_id_weight", 0.80))
 
                 # If Virtual Wardrobe garment was uploaded, incorporate context into prompt
                 if garment_id:

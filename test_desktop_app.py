@@ -204,6 +204,13 @@ class WindowsPackagingTests(unittest.TestCase):
         self.assertIn('} else if (!result.release_published) {', source)
         self.assertIn('elements.updateStatus.textContent = "No Windows release published";', source)
 
+    def test_windows_ui_defaults_to_natural_face_detail(self):
+        root = Path(__file__).parent / "desktop"
+        script = (root / "app.js").read_text(encoding="utf-8")
+        page = (root / "index.html").read_text(encoding="utf-8")
+        self.assertIn("faceIdWeight: 0.80", script)
+        self.assertRegex(page, r'id="faceIdWeight"[^>]*max="0\.90"[^>]*value="0\.80"')
+
     def test_release_workflow_versions_exceed_manually_built_1_0_releases(self):
         source = (Path(__file__).parent / ".github" / "workflows" / "windows-desktop-release.yml")
         self.assertIn("APP_VERSION: 1.1.${{ github.run_number }}", source.read_text(encoding="utf-8"))

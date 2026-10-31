@@ -439,9 +439,8 @@ def calibrate_swapped_face_tone(
         h, w = swapped_bgr.shape[:2]
         bw, bh = x2 - x1, y2 - y1
 
-        # Strict anatomical mandibular face mask (hairline, temples, cheeks, and jawline arch down to chin)
-        # Terminates cleanly at the chin (y2) so the neck is NEVER modified by the face engine
-        mask = np.zeros((h, w), dtype=np.float32)
+        # Restrict color correction to skin so eyes, lips, hair and brows keep their scene colors.
+        mask = np.zeros((h, w), dtype=np.uint8)
         pts = np.array([
             [x1 - int(bw * 0.02), max(0, y1 - int(bh * 0.05))],
             [x2 + int(bw * 0.02), max(0, y1 - int(bh * 0.05))],
@@ -454,16 +453,29 @@ def calibrate_swapped_face_tone(
             [x1 - int(bw * 0.05), y1 + int(bh * 0.60)],
             [x1 - int(bw * 0.05), y1 + int(bh * 0.25)],
         ], dtype=np.int32)
-        cv2.fillPoly(mask, [pts], 1.0)
-        # Natural soft feathering along cranial and facial boundary to prevent sharp 'placed face' outline
-        mask = cv2.GaussianBlur(mask, (31, 31), 9.0)[:, :, np.newaxis]
+        cv2.fillPoly(mask, [pts], 1)
+        ycrcb = cv2.cvtColor(swapped_bgr, cv2.COLOR_BGR2YCrCb)
+        gray = cv2.cvtColor(swapped_bgr, cv2.COLOR_BGR2GRAY)
+        skin_pixels = (
+            (ycrcb[:, :, 1] >= 130) & (ycrcb[:, :, 1] <= 180) &
+            (ycrcb[:, :, 2] >= 75) & (ycrcb[:, :, 2] <= 135) &
+            (gray >= 12) & (gray <= 245)
+        )
+        mask = (mask > 0) & skin_pixels
+        if np.count_nonzero(mask) < 50:
+            print("[FaceEngine] Tone calibration skipped: insufficient confident facial skin pixels.")
+            return swapped_bgr
+        # A narrow feather softens only the skin-region boundary without tinting features.
+        feather_sigma = max(1.0, min(3.0, bw * 0.015))
+        mask = cv2.GaussianBlur(mask.astype(np.float32), (0, 0), feather_sigma)[:, :, np.newaxis]
+        mask *= skin_pixels[:, :, np.newaxis]
 
         swapped_lab = cv2.cvtColor(swapped_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
         calibrated_lab = swapped_lab.copy()
 
         # Exact ground-truth melanin chrominance deltas (100% full precision)
-        da = src_a - tgt_a
-        db = src_b - tgt_b
+        da = float(np.clip(src_a - tgt_a, -18.0, 18.0))
+        db = float(np.clip(src_b - tgt_b, -18.0, 18.0))
 
         # Scene-lighting anchored luminance calibration:
         # When ref_bgr is supplied (the authentic diffusion scene render), preserve the scene's
@@ -482,6 +494,7 @@ def calibrate_swapped_face_tone(
                 dL = target_l - tgt_l
         else:
             dL = float(np.clip(src_l - tgt_l, -15.0, 15.0))
+        dL = float(np.clip(dL, -30.0, 30.0))
 
         # Apply tone calibration strictly within facial mask
         calibrated_lab[:, :, 0] += dL * mask[:, :, 0]
@@ -530,7 +543,7 @@ def restore_scene_hair(restored_bgr: np.ndarray, scene_bgr: np.ndarray, face_bbo
 def apply_face_lock(
     source_image: Image.Image,
     target_image: Image.Image,
-    fidelity_weight: float = 0.65,
+    fidelity_weight: float = 0.80,
     enable_pores: bool = False,
     enable_grain: bool = False,
     return_status: bool = False,
@@ -624,13 +637,11 @@ def apply_face_lock(
 
     # Step 2: CodeFormer Discrete Codebook Prior with balanced fidelity (w=0.82 prevents plastic airbrushing)
     restored_bgr = swapped_bgr
-    # Dynamic fidelity weighting:
-    # CodeFormer discrete codebook prior produces high-resolution, sharp facial features (eyes, lashes, lips)
-    # when w is in the optimal range [0.55, 0.75]. Ground-truth melanin is locked independently.
+    # Favor fidelity to the swapped face to reduce over-restoration and preserve natural skin detail.
     is_small_face = fh_h < 150
-    effective_fidelity = max(0.55, min(0.75, float(fidelity_weight)))
+    effective_fidelity = max(0.55, min(0.90, float(fidelity_weight)))
     if is_small_face:
-        effective_fidelity = min(0.70, effective_fidelity + 0.05)
+        effective_fidelity = min(0.90, effective_fidelity + 0.05)
     if codeformer_net is not None and face_helper is not None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         try:

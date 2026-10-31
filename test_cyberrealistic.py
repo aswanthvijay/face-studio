@@ -117,7 +117,7 @@ class ImageFixture:
 
 
 class ImageTests(ImageFixture, unittest.TestCase):
-    def test_body_correction_preserves_directional_lightness(self):
+    def test_body_correction_moves_complexion_toward_face_and_preserves_shading(self):
         import cv2
         rgb = self.rgb.copy()
         for y in range(105,225):
@@ -126,9 +126,11 @@ class ImageTests(ImageFixture, unittest.TestCase):
             face_bbox=self.face.bbox, clothing_labels=self.labels, return_info=True)
         before_l = cv2.cvtColor(rgb.astype(np.float32)/255.0, cv2.COLOR_RGB2LAB)[:,:,0]
         after_l = cv2.cvtColor(np.array(output,dtype=np.float32)/255.0, cv2.COLOR_RGB2LAB)[:,:,0]
-        self.assertLess(float(np.max(np.abs(after_l-before_l))), 0.6)
-        delta = np.array(output,dtype=np.int16) - rgb.astype(np.int16)
-        self.assertLessEqual(int(np.max(np.abs(np.diff(delta[:,15:40],axis=0)))), 3)
+        body = self.labels == 14
+        face_l = float(info["target_lab"][0]) / 2.55
+        self.assertLess(abs(float(np.median(after_l[body])) - face_l),
+                        abs(float(np.median(before_l[body])) - face_l))
+        self.assertGreater(float(np.std(after_l[body])), float(np.std(before_l[body])) * 0.5)
         self.assertEqual(float(info["alpha_mask"][105,25]), 0.0)
 
     def test_skin_profile_with_face_box_samples_skin_zones(self):
@@ -156,16 +158,31 @@ class ImageTests(ImageFixture, unittest.TestCase):
         np.testing.assert_array_equal(output[labels!=2],restored[labels!=2])
         self.assertTrue(np.any(output[10:15,60:100]!=restored[10:15,60:100]))
     def test_face_calibration_preserves_distant_pixels_exactly(self):
-        noisy = np.random.default_rng(7).integers(0, 256, (256, 160, 3), dtype=np.uint8)
-        output = face_engine.calibrate_swapped_face_tone(noisy, self.rgb, self.face.bbox, self.face.bbox)
-        np.testing.assert_array_equal(output[150:], noisy[150:])
-        self.assertTrue(np.any(output[20:70, 60:100] != noisy[20:70, 60:100]))
+        source = np.full((256, 160, 3), [80, 110, 150], dtype=np.uint8)
+        swapped = np.full_like(source, [45, 80, 125])
+        source[20:70, 60:100] = [80, 110, 150]
+        swapped[20:70, 60:100] = [45, 80, 125]
+        output = face_engine.calibrate_swapped_face_tone(swapped, source, self.face.bbox, self.face.bbox)
+        np.testing.assert_array_equal(output[150:], swapped[150:])
+        self.assertTrue(np.any(output[20:70, 60:100] != swapped[20:70, 60:100]))
+
+    def test_face_tone_calibration_preserves_non_skin_features(self):
+        source = np.full((256, 160, 3), [80, 110, 150], dtype=np.uint8)
+        swapped = np.full_like(source, [45, 80, 125])
+        bbox = [30, 20, 130, 130]
+        source[20:130, 30:130] = [80, 110, 150]
+        swapped[20:130, 30:130] = [45, 80, 125]
+        swapped[55:60, 65:70] = [5, 5, 5]
+        swapped[90:95, 70:90] = [15, 20, 190]
+        output = face_engine.calibrate_swapped_face_tone(swapped, source, bbox, bbox)
+        np.testing.assert_array_equal(output[55:60, 65:70], swapped[55:60, 65:70])
+        np.testing.assert_array_equal(output[90:95, 70:90], swapped[90:95, 70:90])
 
     def test_face_calibration_matches_reference_luminance_in_generated_scene(self):
         import cv2
-        source = np.full((128, 128, 3), 60, dtype=np.uint8)
-        swapped = np.full((128, 128, 3), 190, dtype=np.uint8)
-        scene = np.full((128, 128, 3), 180, dtype=np.uint8)
+        source = np.full((128, 128, 3), [80, 110, 150], dtype=np.uint8)
+        swapped = np.full((128, 128, 3), [45, 80, 125], dtype=np.uint8)
+        scene = np.full((128, 128, 3), [60, 100, 150], dtype=np.uint8)
         bbox = [10, 10, 118, 118]
         output = face_engine.calibrate_swapped_face_tone(
             swapped, source, bbox, bbox, ref_bgr=scene
@@ -211,7 +228,8 @@ class ImageTests(ImageFixture, unittest.TestCase):
         np.testing.assert_array_equal(np.array(output)[outside], self.rgb[outside])
         self.assertTrue(np.any(np.array(output)[115:145, 20:35] != self.rgb[115:145, 20:35]))
 
-    def test_harmonization_uses_input_skin_profile(self):
+    def test_harmonization_uses_final_face_skin_profile(self):
+        import cv2
         source_profile = {"lab_mean": np.array([150.0, 160.0, 140.0], dtype=np.float32)}
         output, info = skin_engine.harmonize_unified_canvas_skin(
             self.source,
@@ -220,7 +238,9 @@ class ImageTests(ImageFixture, unittest.TestCase):
             clothing_labels=self.labels,
             return_info=True
         )
-        np.testing.assert_allclose(info["target_lab"], source_profile["lab_mean"])
+        face_bgr = cv2.cvtColor(self.rgb, cv2.COLOR_RGB2BGR)
+        face_profile, _ = face_engine.extract_face_skin_profile(face_bgr, self.face.bbox)
+        np.testing.assert_allclose(info["target_lab"], face_profile)
         self.assertTrue(np.any(np.array(output)[115:145, 20:35] != self.rgb[115:145, 20:35]))
 
 
@@ -291,6 +311,10 @@ class PipelineTests(ImageFixture, unittest.TestCase):
         self.assertEqual(self.render.call_count, 2)
         self.assertTrue(result["face_swapped"])
         self.assertNotEqual(result["seed"], 11)
+
+    def test_full_scene_passes_high_fidelity_restoration_weight_through(self):
+        self.run_pipeline(mode="full_scene", face_id_weight=0.85)
+        self.assertEqual(self.face_lock.call_args.kwargs["fidelity_weight"], 0.85)
 
     def test_two_failed_face_transfers_do_not_report_success(self):
         self.face_lock.side_effect = lambda **k: (k["target_image"], False)

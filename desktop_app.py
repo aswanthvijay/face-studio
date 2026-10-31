@@ -161,7 +161,7 @@ class ChatStore:
                 "target": "dress",
                 "variations": 1,
                 "enableFaceId": True,
-                "faceIdWeight": 0.65
+                "faceIdWeight": 0.80
             }]
             self._save_unlocked(chats)
             return chats
