@@ -29,7 +29,7 @@ The callable `verifyPlayPurchase` verifies the purchase token against Google Pla
 
 ### Downloadable Android preview APK
 
-The `Android APK preview` GitHub Actions workflow runs Android unit tests and builds a debug-signed APK for pull requests targeting `main`. Download the `photovance-android-<version>` artifact from the successful Actions run. Merging the workflow to `main` builds and attaches the APK and its SHA-256 checksum to a prerelease named `android-v<version>`. This is a sideload/testing build, not a Play production release. The version can be set when manually dispatching the workflow from `main`.
+After the `Android APK preview` workflow is merged to `main`, run it from GitHub Actions and explicitly approve the Android SDK license terms in its input. It runs Android unit tests, builds a debug-signed APK, uploads the APK and SHA-256 checksum as an artifact, and attaches them to a prerelease named `android-v<version>`. This is a sideload/testing build, not a Play production release. The version can be set when manually dispatching the workflow from `main`.
 
 ### Play Console setup
 

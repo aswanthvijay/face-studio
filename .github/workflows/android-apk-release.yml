@@ -1,12 +1,6 @@
 name: Android APK preview
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
       version_name:
@@ -17,20 +11,25 @@ on:
         description: Android version code
         required: false
         type: string
+      accept_android_sdk_licenses:
+        description: I accept the Android SDK license terms accepted by the build action
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: write
 
 concurrency:
-  group: android-apk-${{ github.event.pull_request.number || github.ref }}
+  group: android-apk-${{ inputs.version_name || github.ref }}
   cancel-in-progress: false
 
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
     env:
-      VERSION_NAME: ${{ inputs.version_name || format('1.0.{0}', github.run_number) }}
-      VERSION_CODE: ${{ inputs.version_code || github.run_number }}
+      VERSION_NAME: ${{ inputs.version_name || '1.0.1' }}
+      VERSION_CODE: ${{ inputs.version_code || '2' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -39,7 +38,15 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Require explicit Android SDK license approval
+        if: inputs.accept_android_sdk_licenses != true
+        run: |
+          echo "Re-run this workflow after explicitly approving the Android SDK license terms."
+          exit 1
+
       - uses: android-actions/setup-android@v3
+        with:
+          accept-android-sdk-licenses: true
 
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
@@ -73,7 +80,6 @@ jobs:
           retention-days: 30
 
       - name: Publish Android preview release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: android-v${{ env.VERSION_NAME }}
