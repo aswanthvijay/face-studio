@@ -12,6 +12,8 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 from urllib.parse import unquote, urlsplit
 
 import requests
@@ -244,14 +246,13 @@ class DesktopBridge:
 
     def check_for_updates(self):
         try:
-            response = requests.get(
+            request = Request(
                 GITHUB_RELEASES_API,
-                headers={"Accept": "application/vnd.github+json", "User-Agent": "FaceStudio-Desktop"},
-                timeout=15
+                headers={"Accept": "application/vnd.github+json", "User-Agent": "FaceStudio-Desktop"}
             )
-            response.raise_for_status()
-            releases = json.loads(response.content.decode("utf-8-sig"))
-        except (requests.RequestException, json.JSONDecodeError, UnicodeDecodeError) as error:
+            with urlopen(request, timeout=15) as response:
+                releases = json.loads(response.read().decode("utf-8-sig"))
+        except (URLError, OSError, json.JSONDecodeError, UnicodeDecodeError) as error:
             return {"success": False, "error": f"Could not check for updates: {error}"}
         if not isinstance(releases, list):
             return {"success": False, "error": "The update service returned an invalid release list."}
@@ -323,30 +324,29 @@ class DesktopBridge:
                 if (parsed_url.scheme != "https" or parsed_url.netloc != "github.com"
                         or parsed_url.path != expected_path or parsed_url.query or parsed_url.fragment):
                     raise ValueError("The release contains an unexpected installer download URL.")
-            checksum_response = requests.get(checksum_url, timeout=30)
-            checksum_response.raise_for_status()
-            expected_hash = checksum_response.content.decode("ascii").strip().split()[0].lower()
+            with urlopen(checksum_url, timeout=30) as checksum_response:
+                expected_hash = checksum_response.read().decode("ascii").strip().split()[0].lower()
             if not re.fullmatch(r"[0-9a-f]{64}", expected_hash):
                 raise ValueError("The installer checksum file is invalid.")
 
-            download = requests.get(installer_url, stream=True, timeout=(15, 300))
-            download.raise_for_status()
-            content_length = int(download.headers.get("Content-Length", "0") or 0)
-            if content_length > 1024 * 1024 * 1024:
-                raise ValueError("The Windows installer exceeds the 1 GB download limit.")
             temporary_path = installer_path.with_suffix(".download")
             digest = hashlib.sha256()
             total = 0
             try:
-                with temporary_path.open("wb") as target:
-                    for chunk in download.iter_content(chunk_size=1024 * 1024):
-                        if not chunk:
-                            continue
-                        total += len(chunk)
-                        if total > 1024 * 1024 * 1024:
-                            raise ValueError("The Windows installer exceeds the 1 GB download limit.")
-                        digest.update(chunk)
-                        target.write(chunk)
+                with urlopen(installer_url, timeout=300) as download:
+                    content_length = int(download.headers.get("Content-Length", "0") or 0)
+                    if content_length > 1024 * 1024 * 1024:
+                        raise ValueError("The Windows installer exceeds the 1 GB download limit.")
+                    with temporary_path.open("wb") as target:
+                        while True:
+                            chunk = download.read(1024 * 1024)
+                            if not chunk:
+                                break
+                            total += len(chunk)
+                            if total > 1024 * 1024 * 1024:
+                                raise ValueError("The Windows installer exceeds the 1 GB download limit.")
+                            digest.update(chunk)
+                            target.write(chunk)
                 if digest.hexdigest() != expected_hash:
                     raise ValueError("The downloaded installer failed its SHA-256 integrity check.")
                 with temporary_path.open("rb") as downloaded:
@@ -357,7 +357,7 @@ class DesktopBridge:
             except Exception:
                 temporary_path.unlink(missing_ok=True)
                 raise
-        except (OSError, ValueError, requests.RequestException, IndexError) as error:
+        except (OSError, ValueError, URLError, IndexError) as error:
             return {"success": False, "error": f"Could not prepare the update: {error}"}
 
         try:

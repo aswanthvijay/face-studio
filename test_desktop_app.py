@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 import re
 import tempfile
@@ -6,7 +7,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from html.parser import HTMLParser
 from pathlib import Path
-from unittest.mock import Mock, PropertyMock, patch
+from unittest.mock import Mock, patch
 
 import requests
 
@@ -297,7 +298,7 @@ class UpdateTests(unittest.TestCase):
             {"tag_name": "v2.0.0", "draft": False, "body": "Unrelated release"},
         ]).encode(), "application/json")
         with patch.object(desktop_app, "APP_VERSION", "1.0.1"), \
-             patch("desktop_app.requests.get", return_value=response):
+             patch("desktop_app.urlopen", return_value=url_response(response.content)):
             result = bridge.check_for_updates()
 
         self.assertTrue(result["success"])
@@ -307,15 +308,13 @@ class UpdateTests(unittest.TestCase):
 
     def test_update_check_does_not_depend_on_chardet(self):
         bridge = self.create_bridge()
-        response = requests_response(json.dumps([
+        response = url_response(json.dumps([
             {"tag_name": "desktop-v1.0.2", "draft": False, "body": "Update"}
-        ]).encode(), "application/json")
+        ]).encode())
         with patch.object(desktop_app, "APP_VERSION", "1.0.1"), \
-             patch("desktop_app.requests.get", return_value=response), \
-             patch.object(
-                 requests.Response,
-                 "text",
-                 new_callable=PropertyMock,
+             patch("desktop_app.urlopen", return_value=response), \
+             patch(
+                 "desktop_app.requests.get",
                  side_effect=AttributeError("module 'chardet' has no attribute 'detect'")
              ):
             result = bridge.check_for_updates()
@@ -326,8 +325,8 @@ class UpdateTests(unittest.TestCase):
 
     def test_reports_current_version_when_no_windows_release_exists(self):
         bridge = self.create_bridge()
-        response = requests_response(b"[]", "application/json")
-        with patch("desktop_app.requests.get", return_value=response):
+        response = url_response(b"[]")
+        with patch("desktop_app.urlopen", return_value=response):
             result = bridge.check_for_updates()
         self.assertEqual(result, {
             "success": True,
@@ -342,7 +341,7 @@ class UpdateTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         installer = b"MZ" + b"windows-installer-payload"
         checksum = hashlib.sha256(installer).hexdigest()
-        api_response = requests_response(json.dumps([{
+        api_response = url_response(json.dumps([{
             "tag_name": "desktop-v1.0.2",
             "draft": False,
             "body": "",
@@ -352,18 +351,14 @@ class UpdateTests(unittest.TestCase):
                 {"name": "FaceStudio-Setup.exe.sha256", "browser_download_url":
                     "https://github.com/aswanthvijay/face-studio/releases/download/desktop-v1.0.2/FaceStudio-Setup.exe.sha256"},
             ],
-        }]).encode(), "application/json")
-        checksum_response = requests_response(f"{checksum}  FaceStudio-Setup.exe\n".encode(), "text/plain")
-        installer_response = requests_response(installer, "application/octet-stream")
-        installer_response._content_consumed = True
-        installer_response.headers["Content-Length"] = str(len(installer))
+        }]).encode())
+        checksum_response = url_response(f"{checksum}  FaceStudio-Setup.exe\n".encode())
+        installer_response = url_response(installer, {"Content-Length": str(len(installer))})
         with (patch.object(desktop_app, "APP_VERSION", "1.0.1"),
               patch.object(desktop_app, "APP_DATA", Path(directory.name)),
-              patch("desktop_app.requests.get", side_effect=[api_response, checksum_response, installer_response]),
-              patch.object(
-                  requests.Response,
-                  "text",
-                  new_callable=PropertyMock,
+              patch("desktop_app.urlopen", side_effect=[api_response, checksum_response, installer_response]),
+              patch(
+                  "desktop_app.requests.get",
                   side_effect=AttributeError("module 'chardet' has no attribute 'detect'")
               ),
               patch("desktop_app.subprocess.Popen") as popen):
@@ -379,7 +374,7 @@ class UpdateTests(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         payload = b"MZtampered-installer"
-        api_response = requests_response(json.dumps([{
+        api_response = url_response(json.dumps([{
             "tag_name": "desktop-v1.0.2", "draft": False, "body": "",
             "assets": [
                 {"name": "FaceStudio-Setup.exe", "browser_download_url":
@@ -387,13 +382,12 @@ class UpdateTests(unittest.TestCase):
                 {"name": "FaceStudio-Setup.exe.sha256", "browser_download_url":
                     "https://github.com/aswanthvijay/face-studio/releases/download/desktop-v1.0.2/FaceStudio-Setup.exe.sha256"},
             ],
-        }]).encode(), "application/json")
-        checksum_response = requests_response((hashlib.sha256(b"expected").hexdigest() + "\n").encode(), "text/plain")
-        installer_response = requests_response(payload, "application/octet-stream")
-        installer_response._content_consumed = True
+        }]).encode())
+        checksum_response = url_response((hashlib.sha256(b"expected").hexdigest() + "\n").encode())
+        installer_response = url_response(payload)
         with (patch.object(desktop_app, "APP_VERSION", "1.0.1"),
               patch.object(desktop_app, "APP_DATA", Path(directory.name)),
-              patch("desktop_app.requests.get", side_effect=[api_response, checksum_response, installer_response]),
+              patch("desktop_app.urlopen", side_effect=[api_response, checksum_response, installer_response]),
               patch("desktop_app.subprocess.Popen") as popen):
             result = bridge.install_update()
 
@@ -408,6 +402,25 @@ def requests_response(content, content_type):
     response._content = content
     response.headers["Content-Type"] = content_type
     return response
+
+
+class URLResponse:
+    def __init__(self, content, headers=None):
+        self.content = io.BytesIO(content)
+        self.headers = headers or {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.content.close()
+
+    def read(self, size=-1):
+        return self.content.read(size)
+
+
+def url_response(content, headers=None):
+    return URLResponse(content, headers)
 
 
 if __name__ == "__main__":
