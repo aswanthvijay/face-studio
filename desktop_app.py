@@ -250,8 +250,8 @@ class DesktopBridge:
                 timeout=15
             )
             response.raise_for_status()
-            releases = response.json()
-        except (requests.RequestException, requests.exceptions.JSONDecodeError) as error:
+            releases = json.loads(response.content.decode("utf-8-sig"))
+        except (requests.RequestException, json.JSONDecodeError, UnicodeDecodeError) as error:
             return {"success": False, "error": f"Could not check for updates: {error}"}
         if not isinstance(releases, list):
             return {"success": False, "error": "The update service returned an invalid release list."}
@@ -325,7 +325,7 @@ class DesktopBridge:
                     raise ValueError("The release contains an unexpected installer download URL.")
             checksum_response = requests.get(checksum_url, timeout=30)
             checksum_response.raise_for_status()
-            expected_hash = checksum_response.text.strip().split()[0].lower()
+            expected_hash = checksum_response.content.decode("ascii").strip().split()[0].lower()
             if not re.fullmatch(r"[0-9a-f]{64}", expected_hash):
                 raise ValueError("The installer checksum file is invalid.")
 

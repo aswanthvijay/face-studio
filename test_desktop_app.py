@@ -6,7 +6,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from html.parser import HTMLParser
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import PropertyMock, patch
 
 import requests
 
@@ -246,6 +246,25 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(result["version"], "1.0.2")
         self.assertEqual(result["release_notes"], "Second build")
 
+    def test_update_check_does_not_depend_on_chardet(self):
+        bridge = self.create_bridge()
+        response = requests_response(json.dumps([
+            {"tag_name": "desktop-v1.0.2", "draft": False, "body": "Update"}
+        ]).encode(), "application/json")
+        with patch.object(desktop_app, "APP_VERSION", "1.0.1"), \
+             patch("desktop_app.requests.get", return_value=response), \
+             patch.object(
+                 requests.Response,
+                 "text",
+                 new_callable=PropertyMock,
+                 side_effect=AttributeError("module 'chardet' has no attribute 'detect'")
+             ):
+            result = bridge.check_for_updates()
+
+        self.assertTrue(result["success"])
+        self.assertTrue(result["update_available"])
+        self.assertEqual(result["version"], "1.0.2")
+
     def test_reports_current_version_when_no_windows_release_exists(self):
         bridge = self.create_bridge()
         response = requests_response(b"[]", "application/json")
@@ -282,6 +301,12 @@ class UpdateTests(unittest.TestCase):
         with (patch.object(desktop_app, "APP_VERSION", "1.0.1"),
               patch.object(desktop_app, "APP_DATA", Path(directory.name)),
               patch("desktop_app.requests.get", side_effect=[api_response, checksum_response, installer_response]),
+              patch.object(
+                  requests.Response,
+                  "text",
+                  new_callable=PropertyMock,
+                  side_effect=AttributeError("module 'chardet' has no attribute 'detect'")
+              ),
               patch("desktop_app.subprocess.Popen") as popen):
             result = bridge.install_update()
 
