@@ -6,7 +6,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from html.parser import HTMLParser
 from pathlib import Path
-from unittest.mock import PropertyMock, patch
+from unittest.mock import Mock, PropertyMock, patch
 
 import requests
 
@@ -130,6 +130,65 @@ class DesktopAssetTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Only Face Studio"):
                 bridge.save_asset("/outputs/%2e%2e/private.png")
         get.assert_not_called()
+
+    def test_downloads_saved_result_to_user_selected_path(self):
+        bridge = self.create_bridge()
+        bridge.store.asset_directory.mkdir(exist_ok=True)
+        name = "c" * 32 + ".png"
+        (bridge.store.asset_directory / name).write_bytes(b"generated-image")
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "my-result.png"
+            window = Mock()
+            window.create_file_dialog.return_value = (str(target),)
+            with patch.object(bridge, "window", window), \
+                 patch.dict("sys.modules", {"webview": Mock(FileDialog=Mock(SAVE=30))}):
+                result = bridge.download_result(f"asset:{name}", 1)
+
+            self.assertTrue(result["success"])
+            self.assertEqual(target.read_bytes(), b"generated-image")
+            window.create_file_dialog.assert_called_once_with(
+                30,
+                save_filename="FaceStudio-result-1.png"
+            )
+
+    def test_downloads_backend_result_when_chat_asset_copy_was_unavailable(self):
+        bridge = self.create_bridge()
+        response = requests_response(b"generated-image", "image/jpeg")
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "result.jpg"
+            window = Mock()
+            window.create_file_dialog.return_value = str(target)
+            with patch.object(bridge, "window", window), \
+                 patch.dict("sys.modules", {"webview": Mock(FileDialog=Mock(SAVE=30))}), \
+                 patch("desktop_app.requests.get", return_value=response) as get:
+                result = bridge.download_result("/outputs/result.jpg", 1)
+
+            get.assert_called_once_with(f"{BACKEND_URL}/outputs/result.jpg", timeout=60)
+            self.assertTrue(result["success"])
+            self.assertEqual(target.read_bytes(), b"generated-image")
+            window.create_file_dialog.assert_called_once_with(
+                30,
+                save_filename="FaceStudio-result-1.jpg"
+            )
+
+    def test_download_result_handles_cancel_and_rejects_invalid_references(self):
+        bridge = self.create_bridge()
+        bridge.store.asset_directory.mkdir(exist_ok=True)
+        name = "d" * 32 + ".webp"
+        (bridge.store.asset_directory / name).write_bytes(b"generated-image")
+        window = Mock()
+        window.create_file_dialog.return_value = None
+        with patch.object(bridge, "window", window), \
+             patch.dict("sys.modules", {"webview": Mock(FileDialog=Mock(SAVE=30))}):
+            with self.assertRaisesRegex(ValueError, "generated image reference"):
+                bridge.download_result("asset:../../private.png", 1)
+            result = bridge.download_result(f"asset:{name}", 2)
+
+        self.assertTrue(result["cancelled"])
+        window.create_file_dialog.assert_called_once_with(
+            30,
+            save_filename="FaceStudio-result-2.webp"
+        )
 
     def test_restores_a_saved_reference_to_a_new_backend_image_id(self):
         bridge = self.create_bridge()

@@ -117,8 +117,12 @@ button { color: inherit; cursor: pointer; }
 .message-meta { margin:0 0 9px 3px; color:var(--muted); font-size:11px; }
 .source-thumb { display:block; width:56px; height:72px; margin-top:8px; border-radius:8px; object-fit:cover; }
 .result-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:10px; margin-top:12px; }
-.result-grid a { display:block; border:1px solid var(--border); border-radius:12px; overflow:hidden; background:#080b10; }
+.result-card { min-width:0; overflow:hidden; border:1px solid var(--border); border-radius:12px; background:#080b10; }
+.result-card a { display:block; }
 .result-grid img { display:block; width:100%; max-height:520px; object-fit:contain; }
+.result-download { width:100%; padding:9px 12px; border:0; border-top:1px solid var(--border); background:#101725; color:#c9d7e8; font-size:11px; transition:background .16s ease,color .16s ease; }
+.result-download:hover { background:#172a3d; color:#fff; }
+.result-download:disabled { opacity:.55; cursor:wait; }
 .assistant-note { margin-top:9px; color:var(--muted); font-size:11px; }
 .error-message { color:#fecaca; }
 .composer-wrap { width:min(100%, 1008px); margin:0 auto 18px; padding:0 24px; }
