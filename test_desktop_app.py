@@ -259,8 +259,20 @@ class WindowsPackagingTests(unittest.TestCase):
         self.assertIn('aria-label="How it works"', page)
         self.assertIn('aria-label="Add a reference photo"', page)
         self.assertIn('<span>Generate</span>', page)
-        self.assertIn('textContent = "Creating…"', script)
+        self.assertIn("Starting your generation…", script)
         self.assertIn("@media (prefers-reduced-motion: reduce)", styles)
+
+    def test_windows_generation_uses_a_serial_queue_without_disabling_generate(self):
+        root = Path(__file__).parent / "desktop"
+        page = (root / "index.html").read_text(encoding="utf-8")
+        script = (root / "app.js").read_text(encoding="utf-8")
+        self.assertIn('id="generationQueueStatus"', page)
+        self.assertIn("const generationQueue = [];", script)
+        self.assertIn("generationQueue.push(job);", script)
+        self.assertIn("while (generationQueue.length)", script)
+        self.assertIn("await runGeneration(job);", script)
+        self.assertIn("Waiting for the GPU · position", script)
+        self.assertNotIn("elements.send.disabled = true", script)
 
     def test_reference_images_in_messages_use_compact_thumbnail_sizing(self):
         root = Path(__file__).parent / "desktop"
