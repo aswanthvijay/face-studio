@@ -121,16 +121,16 @@ def reinject_micro_pores(
     bbox: list,
     src_bgr: np.ndarray = None,
     src_bbox: list = None,
-    pore_strength: float = 1.35,
+    src_kps: np.ndarray = None,
+    tgt_kps: np.ndarray = None,
+    pore_strength: float = 1.0,
     body_var: float = None
 ) -> np.ndarray:
     """
-    Multi-Scale Frequency-Separated DSLR Epidermal Pore Recovery:
-    Extracts authentic micro-pores, dermal relief, and skin grain from ref_bgr (the raw diffusion render)
-    combined with biological epidermal micro-pores from src_bgr (the authentic user reference photo)
-    and layers them onto base_bgr (the swapped face) strictly within facial skin regions
-    (forehead, cheeks, nose bridge, chin), while preserving sharp eyes, brows, and lips.
-    Dynamically bridges face texture variance to match body skin variance.
+    Multi-Scale Frequency-Separated DSLR Epidermal Pore Recovery (Bug B2):
+    Extracts authentic micro-pores and dermal relief exclusively from ref_bgr (the pose-aligned render).
+    Computes scalar target pore variance strictly from src_bgr inner facial skin without 2D affine warping,
+    preventing reference hair strands and earrings from being embossed as vertical cheek scars.
     """
     try:
         t_bx1, t_by1, t_bx2, t_by2 = [int(x) for x in bbox]
@@ -140,58 +140,48 @@ def reinject_micro_pores(
         if t_bx2 <= t_bx1 or t_by2 <= t_by1:
             return base_bgr
 
-        # 1. 2-Band Frequency separation from raw CyberRealistic XL diffusion target on single-channel grayscale luminance
-        ref_gray = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
-        # Band 1 (fine micro-pores): sigma=0.7
-        g1 = cv2.GaussianBlur(ref_gray, (0, 0), 0.7)
-        high1 = ref_gray - g1
-
-        # Band 2 (epidermal relief & grain): sigma=1.8
-        g2 = cv2.GaussianBlur(ref_gray, (0, 0), 1.8)
-        high2 = g1 - g2
-
-        # Dynamic gain to bridge face smoothness to body skin variance
-        gray_base = cv2.cvtColor(base_bgr[t_by1:t_by2, t_bx1:t_bx2], cv2.COLOR_BGR2GRAY) if t_by2 > t_by1 and t_bx2 > t_bx1 else None
-        current_face_var = float(cv2.Laplacian(gray_base, cv2.CV_64F).var()) if gray_base is not None and gray_base.size > 0 else 100.0
-        gain = 1.0
-        if body_var is not None and body_var > 10.0 and current_face_var > 0:
-            var_ratio = body_var / current_face_var
-            gain = np.clip(np.sqrt(var_ratio), 0.85, 1.15)
-
-        diffusion_pore_mono = (high1 * 0.95 + high2 * 0.50) * gain
-
-        # 2. Extract genuine biological DSLR pores from source reference photograph if available
-        src_pore_canvas = np.zeros((h_img, w_img), dtype=np.float32)
+        # 1. Compute target variance from src_bgr inside its inner facial ellipse
+        target_var = 120.0
         if src_bgr is not None and src_bbox is not None:
             try:
                 sx1, sy1, sx2, sy2 = [int(v) for v in src_bbox]
+                sh_src, sw_src = src_bgr.shape[:2]
                 sx1, sy1 = max(0, sx1), max(0, sy1)
-                sx2, sy2 = min(src_bgr.shape[1], sx2), min(src_bgr.shape[0], sy2)
+                sx2, sy2 = min(sw_src, sx2), min(sh_src, sy2)
                 sw, sh = sx2 - sx1, sy2 - sy1
-                tw, th = t_bx2 - t_bx1, t_by2 - t_by1
-                if sw > 32 and sh > 32 and tw > 32 and th > 32:
-                    src_crop = src_bgr[sy1:sy2, sx1:sx2]
-                    src_resized = cv2.resize(src_crop, (tw, th), interpolation=cv2.INTER_LANCZOS4)
-                    src_gray = cv2.cvtColor(src_resized, cv2.COLOR_BGR2GRAY).astype(np.float32)
-                    sg1 = cv2.GaussianBlur(src_gray, (0, 0), 0.8)
-                    src_high = src_gray - sg1
-                    src_pore_canvas[t_by1:t_by2, t_bx1:t_bx2] = src_high
-            except Exception as src_err:
-                print(f"[FaceEngine] Source pore extraction note: {src_err}")
+                if sw > 20 and sh > 20:
+                    scx, scy = (sx1 + sx2) // 2, (sy1 + sy2) // 2
+                    src_oval = np.zeros((sh_src, sw_src), dtype=np.uint8)
+                    cv2.ellipse(src_oval, (scx, scy), (int(0.28 * sw), int(0.30 * sh)), 0, 0, 360, 1, -1)
+                    src_ycrcb = cv2.cvtColor(src_bgr, cv2.COLOR_BGR2YCrCb)
+                    src_cr = src_ycrcb[:, :, 1]
+                    src_cb = src_ycrcb[:, :, 2]
+                    src_skin = (src_oval == 1) & (src_cr >= 133) & (src_cr <= 173) & (src_cb >= 77) & (src_cb <= 127)
+                    src_gray = cv2.cvtColor(src_bgr, cv2.COLOR_BGR2GRAY)
+                    if np.count_nonzero(src_skin) > 50:
+                        src_lap = cv2.Laplacian(src_gray, cv2.CV_64F)
+                        target_var = float(np.var(src_lap[src_skin]))
+                        target_var = float(np.clip(target_var, 35.0, 240.0))
+            except Exception:
+                pass
+        elif body_var is not None and body_var > 10.0:
+            target_var = float(np.clip(body_var, 35.0, 240.0))
 
-        # Primary donor is raw diffusion render with authentic scene lighting
-        # Ensure pore details are strictly zero-mean high-frequency textural residuals (no color shift)
-        diffusion_pore_mono = diffusion_pore_mono - np.mean(diffusion_pore_mono)
-        has_src_pores = np.count_nonzero(src_pore_canvas > 1.0) > 100
-        if has_src_pores:
-            src_pore_canvas = src_pore_canvas - np.mean(src_pore_canvas)
-            pore_detail_mono = diffusion_pore_mono * 0.80 + src_pore_canvas * 0.35
-        else:
-            pore_detail_mono = diffusion_pore_mono
+        # 2. Extract spatial high-frequency pore structure exclusively from pose-aligned ref_bgr
+        ref_lab = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
+        ref_l = ref_lab[:, :, 0]
+        blur_1_2 = cv2.GaussianBlur(ref_l, (0, 0), 1.2)
+        blur_3_6 = cv2.GaussianBlur(ref_l, (0, 0), 3.6)
+        detail_band = blur_1_2 - blur_3_6
+        detail_band = detail_band - np.mean(detail_band, axis=(0, 1), keepdims=True)
+
+        ref_gray = cv2.cvtColor(ref_bgr[t_by1:t_by2, t_bx1:t_bx2], cv2.COLOR_BGR2GRAY) if t_by2 > t_by1 and t_bx2 > t_bx1 else None
+        ref_var = float(cv2.Laplacian(ref_gray, cv2.CV_64F).var()) if ref_gray is not None and ref_gray.size > 0 else 100.0
+        ref_var = max(ref_var, 1.0)
+        gain = float(np.clip(np.sqrt(target_var / ref_var), 0.70, 1.45))
+        pore_detail = detail_band * gain
 
         # 3. Anatomical polygon face mask down to mandibular jawline / chin fade zone
-        # Confined strictly to the CodeFormer restoration zone (chin + 0.12*bh) so that
-        # neck skin below the chin preserves its authentic untouched diffusion pores without double-injection
         bw, bh = t_bx2 - t_bx1, t_by2 - t_by1
         face_mask = np.zeros((h_img, w_img), dtype=np.float32)
         neck_bottom = min(h_img, int(t_by2 + bh * 0.12))
@@ -218,30 +208,37 @@ def reinject_micro_pores(
 
         # 6. Semantic eye orbits exclusion
         eye_mask = np.zeros((h_img, w_img), dtype=np.float32)
-        cv2.ellipse(eye_mask, (int(t_bx1 + bw * 0.32), int(t_by1 + bh * 0.40)),
-                    (int(bw * 0.16), int(bh * 0.12)), 0, 0, 360, 1.0, -1)
-        cv2.ellipse(eye_mask, (int(t_bx1 + bw * 0.68), int(t_by1 + bh * 0.40)),
-                    (int(bw * 0.16), int(bh * 0.12)), 0, 0, 360, 1.0, -1)
+        if tgt_kps is not None and len(tgt_kps) >= 5:
+            eye_dist = max(10.0, float(np.linalg.norm(tgt_kps[0] - tgt_kps[1])))
+            cv2.ellipse(eye_mask, (int(tgt_kps[0][0]), int(tgt_kps[0][1])), (int(eye_dist * 0.28), int(eye_dist * 0.20)), 0, 0, 360, 1.0, -1)
+            cv2.ellipse(eye_mask, (int(tgt_kps[1][0]), int(tgt_kps[1][1])), (int(eye_dist * 0.28), int(eye_dist * 0.20)), 0, 0, 360, 1.0, -1)
+        else:
+            cv2.ellipse(eye_mask, (int(t_bx1 + bw * 0.32), int(t_by1 + bh * 0.40)), (int(bw * 0.16), int(bh * 0.12)), 0, 0, 360, 1.0, -1)
+            cv2.ellipse(eye_mask, (int(t_bx1 + bw * 0.68), int(t_by1 + bh * 0.40)), (int(bw * 0.16), int(bh * 0.12)), 0, 0, 360, 1.0, -1)
         eye_mask = cv2.GaussianBlur(eye_mask, (15, 15), 5.0)
         non_eye = 1.0 - eye_mask
 
         # 7. Semantic lip vermilion exclusion
-        lip_y_mid = int(t_by1 + bh * 0.77)
-        lip_x_mid = (t_bx1 + t_bx2) // 2
-        lip_rx = int(bw * 0.22)
-        lip_ry = int(bh * 0.11)
         lip_mask = np.zeros((h_img, w_img), dtype=np.float32)
-        cv2.ellipse(lip_mask, (lip_x_mid, lip_y_mid), (lip_rx, lip_ry), 0, 0, 360, 1.0, -1)
+        if tgt_kps is not None and len(tgt_kps) >= 5:
+            mouth_center = (tgt_kps[3] + tgt_kps[4]) / 2.0
+            mouth_w = max(10.0, float(np.linalg.norm(tgt_kps[3] - tgt_kps[4])))
+            cv2.ellipse(lip_mask, (int(mouth_center[0]), int(mouth_center[1])), (int(mouth_w * 0.60), int(mouth_w * 0.32)), 0, 0, 360, 1.0, -1)
+        else:
+            lip_y_mid = int(t_by1 + bh * 0.77)
+            lip_x_mid = (t_bx1 + t_bx2) // 2
+            cv2.ellipse(lip_mask, (lip_x_mid, lip_y_mid), (int(bw * 0.22), int(bh * 0.11)), 0, 0, 360, 1.0, -1)
         lip_mask = cv2.GaussianBlur(lip_mask, (15, 15), 5.0)
         non_lip = 1.0 - lip_mask
 
-        # 8. Final combined skin mask with smooth feathering
+        # 8. Final combined skin mask with smooth feathering (tgt_skin_gate)
         final_skin_mask = face_mask * skin_cr_cb * non_dark * non_lip * non_eye
-        final_skin_mask = cv2.GaussianBlur(final_skin_mask, (11, 11), 3.0)[:, :, np.newaxis]
+        final_skin_mask = cv2.GaussianBlur(final_skin_mask, (11, 11), 3.0)
 
-        # 9. Re-inject multi-band epidermal pore detail symmetrically across channels
-        enhanced = base_bgr.astype(np.float32) + (pore_detail_mono[:, :, None] * pore_strength * final_skin_mask)
-        return np.clip(enhanced, 0, 255).astype(np.uint8)
+        # 9. Re-inject multi-band epidermal pore detail into Luminance (L*) channel
+        base_lab = cv2.cvtColor(base_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
+        base_lab[:, :, 0] = np.clip(base_lab[:, :, 0] + (pore_detail * pore_strength * final_skin_mask * 0.85), 0, 255)
+        return cv2.cvtColor(base_lab.astype(np.uint8), cv2.COLOR_LAB2BGR)
     except Exception as e:
         print(f"[FaceEngine] Micro-pore reinjection note: {e}")
         return base_bgr
@@ -314,38 +311,141 @@ def enhance_facial_clarity(restored_bgr: np.ndarray, face_bbox: list, kps: np.nd
         return restored_bgr
 
 
-def detect_faces_robust(app, img_bgr: np.ndarray):
-    """Multi-scale, multi-threshold face detector for difficult lighting or angles."""
-    faces = app.get(img_bgr)
-    if faces:
+def _match_low_freq_cheek_boundary(
+    warped_bgr: np.ndarray,
+    target_bgr: np.ndarray,
+    hull_mask: np.ndarray,
+    bbox=None,
+) -> np.ndarray:
+    """Align low-frequency LAB luminance/chrominance along the outer cheek transition ring."""
+    h, w = target_bgr.shape[:2]
+    ring = (hull_mask > 0.02) & (hull_mask < 0.85)
+    if np.count_nonzero(ring) < 60:
+        return warped_bgr
+    if bbox is not None:
+        bw = max(1.0, float(bbox[2] - bbox[0]))
+        bh = max(1.0, float(bbox[3] - bbox[1]))
+        sigma = max(9.0, 0.08 * min(bw, bh))
+    else:
+        sigma = 15.0
+    ksize = int(sigma * 3) | 1
+    w_lab = cv2.cvtColor(warped_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
+    t_lab = cv2.cvtColor(target_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
+    valid_w = (np.any(warped_bgr > 2, axis=2)).astype(np.float32)
+    valid_blur = cv2.GaussianBlur(valid_w, (ksize, ksize), sigma) + 1e-6
+    out_lab = w_lab.copy()
+    edge_weight = np.clip(1.0 - (hull_mask / 0.85), 0.0, 1.0) * (hull_mask > 0.005).astype(np.float32)
+    edge_weight = cv2.GaussianBlur(edge_weight, (21, 21), 5.0)
+    for c, strength in ((0, 0.65), (1, 0.85), (2, 0.85)):
+        w_low = cv2.GaussianBlur(w_lab[:, :, c] * valid_w, (ksize, ksize), sigma) / valid_blur
+        t_low = cv2.GaussianBlur(t_lab[:, :, c], (ksize, ksize), sigma)
+        delta = (t_low - w_low) * edge_weight * strength
+        out_lab[:, :, c] = np.clip(out_lab[:, :, c] + delta, 0.0, 255.0)
+    return cv2.cvtColor(out_lab.astype(np.uint8), cv2.COLOR_LAB2BGR)
+
+
+def warp_back_128(
+    bgr_fake: np.ndarray,
+    M: np.ndarray,
+    target_bgr: np.ndarray,
+    hull_mask: np.ndarray = None,
+    bbox: list = None,
+) -> np.ndarray:
+    """
+    Warps 128x128 face back onto canvas with elliptical margin-14 crop oval,
+    smooth feathering, and low-frequency cheek boundary matching (Bug B1).
+    """
+    h_tgt, w_tgt = target_bgr.shape[:2]
+    IM = cv2.invertAffineTransform(M)
+    
+    warped_bgr = cv2.warpAffine(
+        bgr_fake,
+        IM,
+        (w_tgt, h_tgt),
+        flags=cv2.INTER_LANCZOS4,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(0, 0, 0)
+    )
+    
+    margin = 14
+    crop_oval = np.zeros((128, 128), dtype=np.float32)
+    center = (64, 64)
+    axes = (64 - margin, 64 - margin)
+    cv2.ellipse(crop_oval, center, axes, 0, 0, 360, 1.0, -1)
+    crop_oval = cv2.GaussianBlur(crop_oval, (21, 21), 6.0)
+    
+    valid_crop_mask = cv2.warpAffine(
+        crop_oval,
+        IM,
+        (w_tgt, h_tgt),
+        flags=cv2.INTER_LANCZOS4,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=0.0
+    )
+    if valid_crop_mask.ndim == 2:
+        valid_crop_mask = valid_crop_mask[:, :, np.newaxis]
+        
+    if hull_mask is not None:
+        if hull_mask.ndim == 2:
+            hull_mask = hull_mask[:, :, np.newaxis]
+        h_norm = hull_mask.astype(np.float32)
+        if h_norm.max() > 1.0:
+            h_norm = h_norm / 255.0
+        active_mask = h_norm * valid_crop_mask
+    else:
+        active_mask = valid_crop_mask
+        
+    warped_bgr = _match_low_freq_cheek_boundary(
+        warped_bgr, target_bgr, active_mask[:, :, 0] if active_mask.ndim == 3 else active_mask, bbox
+    )
+    
+    blended = warped_bgr.astype(np.float32) * active_mask + target_bgr.astype(np.float32) * (1.0 - active_mask)
+    return np.clip(blended, 0, 255).astype(np.uint8)
+
+
+def detect_faces_robust(app_or_bgr, img_bgr: np.ndarray = None) -> list:
+    """Detect faces using progressive resolution & threshold fallback (thread-safe, Bug B7)."""
+    if img_bgr is None:
+        bgr_image = app_or_bgr
+        app = get_face_app()
+    else:
+        app = app_or_bgr if app_or_bgr is not None else get_face_app()
+        bgr_image = img_bgr
+
+    if app is None or bgr_image is None or bgr_image.size == 0:
+        return []
+
+    with _DETECTOR_LOCK:
+        orig_size = getattr(app.det_model, "det_size", (640, 640))
+        orig_thresh = getattr(app.det_model, "det_thresh", 0.5)
+        configs = [
+            ((640, 640), 0.50),
+            ((1024, 1024), 0.40),
+            ((1280, 1280), 0.30),
+            ((640, 640), 0.25),
+        ]
+        faces = []
+        try:
+            for det_size, det_thresh in configs:
+                try:
+                    app.det_model.det_size = det_size
+                    app.det_model.det_thresh = det_thresh
+                    faces = app.get(bgr_image)
+                    if faces:
+                        break
+                except Exception:
+                    continue
+        finally:
+            try:
+                app.det_model.det_size = orig_size
+                app.det_model.det_thresh = orig_thresh
+            except Exception:
+                pass
         return faces
-
-    orig_det_thresh = getattr(app.det_model, "det_thresh", 0.5)
-    orig_det_size = getattr(app.det_model, "det_size", (640, 640))
-    try:
-        # Try higher resolution detection for small faces
-        app.det_model.det_size = (1024, 1024)
-        faces = app.get(img_bgr)
-        if faces:
-            return faces
-
-        # Try lower threshold for side profiles / tilted faces
-        app.det_model.det_thresh = 0.35
-        faces = app.get(img_bgr)
-        if faces:
-            return faces
-
-        # Try smaller resolution
-        app.det_model.det_size = (512, 512)
-        faces = app.get(img_bgr)
-        return faces or []
-    finally:
-        app.det_model.det_thresh = orig_det_thresh
-        app.det_model.det_size = orig_det_size
 
 
 def extract_face_skin_profile(face_bgr: np.ndarray, face_bbox: list) -> tuple[np.ndarray, np.ndarray]:
-    """Extracts reference skin distribution (median L*, mean a*, b*, and std in CIE-LAB) from forehead and cheeks."""
+    """Extracts reference skin distribution (median L*, mean a*, b*, and std in CIE-LAB) trimmed to [15, 85] percentiles."""
     x1, y1, x2, y2 = [int(v) for v in face_bbox]
     h_img, w_img = face_bgr.shape[:2]
     x1, y1 = max(0, x1), max(0, y1)
@@ -355,10 +455,7 @@ def extract_face_skin_profile(face_bgr: np.ndarray, face_bbox: list) -> tuple[np
     if fw <= 0 or fh <= 0:
         return np.array([128.0, 128.0, 128.0], dtype=np.float32), np.array([10.0, 5.0, 5.0], dtype=np.float32)
 
-    # 3-zone sampling coordinates avoiding eyes, brows, nostrils, and mouth:
-    # 1. Forehead: [x1 + 0.30w, y1 + 0.12h, x1 + 0.70w, y1 + 0.28h]
-    # 2. Left Cheek: [x1 + 0.15w, y1 + 0.50h, x1 + 0.38w, y1 + 0.72h]
-    # 3. Right Cheek: [x1 + 0.62w, y1 + 0.50h, x1 + 0.85w, y1 + 0.72h]
+    # 3-zone sampling coordinates avoiding eyes, brows, nostrils, and mouth
     zones = [
         (int(x1 + fw * 0.30), int(y1 + fh * 0.12), int(x1 + fw * 0.70), int(y1 + fh * 0.28)),
         (int(x1 + fw * 0.15), int(y1 + fh * 0.50), int(x1 + fw * 0.38), int(y1 + fh * 0.72)),
@@ -388,9 +485,9 @@ def extract_face_skin_profile(face_bgr: np.ndarray, face_bbox: list) -> tuple[np
 
     cr = ycrcb[:, 1]
     cb = ycrcb[:, 2]
-    skin_chroma = (cr >= 130) & (cr <= 180) & (cb >= 75) & (cb <= 135)
+    # Filter valid facial skin pixels using YCrCb (Cr in [133, 175], Cb in [77, 129])
+    skin_chroma = (cr >= 133) & (cr <= 175) & (cb >= 77) & (cb <= 129)
 
-    # Adaptive melanin shadow floor and upper bound
     shadow_floor = max(12, int(np.percentile(gray, 10))) if len(gray) > 10 else 12
     valid_mask = skin_chroma & (gray >= shadow_floor) & (gray <= 235)
 
@@ -401,6 +498,19 @@ def extract_face_skin_profile(face_bgr: np.ndarray, face_bbox: list) -> tuple[np
         valid_mask = np.ones(len(gray), dtype=bool)
 
     lab_pixels = cv2.cvtColor(bgr_1d, cv2.COLOR_BGR2LAB).reshape(-1, 3)[valid_mask]
+
+    # Trim outliers outside the [15, 85] percentile range on L, a, and b to reject specular glare and deep shadows
+    if len(lab_pixels) > 10:
+        l15, l85 = np.percentile(lab_pixels[:, 0], [15, 85])
+        a15, a85 = np.percentile(lab_pixels[:, 1], [15, 85])
+        b15, b85 = np.percentile(lab_pixels[:, 2], [15, 85])
+        trim_mask = (
+            (lab_pixels[:, 0] >= l15) & (lab_pixels[:, 0] <= l85) &
+            (lab_pixels[:, 1] >= a15) & (lab_pixels[:, 1] <= a85) &
+            (lab_pixels[:, 2] >= b15) & (lab_pixels[:, 2] <= b85)
+        )
+        if np.count_nonzero(trim_mask) >= 10:
+            lab_pixels = lab_pixels[trim_mask]
 
     med_l = float(np.median(lab_pixels[:, 0]))
     mean_a = float(np.mean(lab_pixels[:, 1]))
@@ -415,17 +525,94 @@ def extract_face_skin_profile(face_bgr: np.ndarray, face_bbox: list) -> tuple[np
     return ref_mean, ref_std
 
 
+def match_skin_tone_lab(source_img_bgr: np.ndarray, target_img_bgr: np.ndarray, source_mask: np.ndarray = None, target_mask: np.ndarray = None) -> np.ndarray:
+    """
+    Transfers the Lab color distribution (mean and std) from the input source skin 
+    to the generated target skin (body/face) to prevent skin lightening bias.
+    """
+    source_lab = cv2.cvtColor(source_img_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
+    target_lab = cv2.cvtColor(target_img_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
+
+    # Compute stats only on valid skin mask pixels if masks are provided
+    src_pixels = source_lab[source_mask > 0] if (source_mask is not None and np.any(source_mask > 0)) else source_lab.reshape(-1, 3)
+    tgt_pixels = target_lab[target_mask > 0] if (target_mask is not None and np.any(target_mask > 0)) else target_lab.reshape(-1, 3)
+
+    src_mean, src_std = np.mean(src_pixels, axis=0), np.std(src_pixels, axis=0) + 1e-6
+    tgt_mean, tgt_std = np.mean(tgt_pixels, axis=0), np.std(tgt_pixels, axis=0) + 1e-6
+
+    # Apply Reinhard color transfer in Lab space
+    result_lab = target_lab.copy()
+    for c in range(3):
+        # Moderate the L-channel (luminance) std scaling slightly to preserve studio lighting shadows
+        scale = (src_std[c] / tgt_std[c]) * (0.75 if c == 0 else 1.0)
+        result_lab[:, :, c] = (result_lab[:, :, c] - tgt_mean[c]) * scale + src_mean[c]
+
+    result_lab = np.clip(result_lab, 0, 255).astype(np.uint8)
+    matched_bgr = cv2.cvtColor(result_lab, cv2.COLOR_LAB2BGR)
+
+    # Blend back using a feathered target mask if provided
+    if target_mask is not None and np.any(target_mask > 0):
+        feathered_mask = cv2.GaussianBlur(target_mask.astype(np.float32) / 255.0, (31, 31), 0)[..., None]
+        return (matched_bgr * feathered_mask + target_img_bgr * (1.0 - feathered_mask)).astype(np.uint8)
+    
+    return matched_bgr
+
+
+def get_clean_face_hull_mask(image_shape: tuple, landmarks_2d: np.ndarray, erode_ratio: float = 0.08) -> np.ndarray:
+    """
+    Creates an inward-eroded, smoothly feathered convex hull mask from facial landmarks
+    to completely eliminate square bounding-box lines and grid artifacts on cheek/jawline.
+    """
+    mask = np.zeros(image_shape[:2], dtype=np.uint8)
+    hull = cv2.convexHull(landmarks_2d.astype(np.int32))
+    cv2.fillConvexPoly(mask, hull, 255)
+
+    face_width = float(np.max(landmarks_2d[:, 0]) - np.min(landmarks_2d[:, 0]))
+    erode_size = max(5, int(face_width * erode_ratio))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (erode_size, erode_size))
+    mask = cv2.erode(mask, kernel, iterations=1)
+
+    blur_size = (erode_size * 2 + 1) | 1
+    feathered_mask = cv2.GaussianBlur(mask.astype(np.float32) / 255.0, (blur_size, blur_size), 0)
+    return feathered_mask[:, :, np.newaxis]
+
+
+def seamless_face_blend(swapped_face_bgr: np.ndarray, body_scene_bgr: np.ndarray, face_mask: np.ndarray) -> np.ndarray:
+    """
+    Seamlessly blends swapped face into body scene eliminating hard jawline edges
+    and cheek/ear boundary artifacts while preserving authentic skin tones.
+    """
+    # If face_mask is already a normalized float feather mask [0, 1]
+    if face_mask.dtype in (np.float32, np.float64):
+        feathered = face_mask if face_mask.ndim == 3 else face_mask[:, :, np.newaxis]
+        feathered = np.clip(feathered, 0.0, 1.0)
+    else:
+        # Erode and smooth the mask to avoid boundary artifacts near the ears/jaw
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+        clean_mask = cv2.erode(face_mask.astype(np.uint8), kernel, iterations=1)
+        feathered = cv2.GaussianBlur(clean_mask.astype(np.float32) / 255.0, (25, 25), 0)[:, :, np.newaxis]
+
+    # Subtle monochromatic grain on luminance to prevent digital plastic sheen
+    noise = np.random.normal(0, 1.2, (swapped_face_bgr.shape[0], swapped_face_bgr.shape[1], 1)).astype(np.float32)
+    textured_face = np.clip(swapped_face_bgr.astype(np.float32) + noise * feathered, 0, 255)
+
+    return (textured_face * feathered + body_scene_bgr.astype(np.float32) * (1.0 - feathered)).clip(0, 255).astype(np.uint8)
+
+
 def calibrate_swapped_face_tone(
     swapped_bgr: np.ndarray,
     src_bgr: np.ndarray,
     tgt_bbox: list,
     src_bbox: list,
-    ref_bgr: np.ndarray = None
+    ref_bgr: np.ndarray = None,
+    src_kps: np.ndarray = None,
+    tgt_kps: np.ndarray = None,
+    tgt_lmks: np.ndarray = None
 ) -> np.ndarray:
-    """Calibrate a face locally; use scene exposure when a raw render is supplied."""
+    """Calibrate swapped face melanin and undertones with wide feathered ellipse & continuous face_skin_gate (Bug B5)."""
     try:
-        ref_mean, _ = extract_face_skin_profile(src_bgr, src_bbox)
-        tgt_mean, _ = extract_face_skin_profile(swapped_bgr, tgt_bbox)
+        ref_mean, ref_std = extract_face_skin_profile(src_bgr, src_bbox)
+        tgt_mean, tgt_std = extract_face_skin_profile(swapped_bgr, tgt_bbox)
 
         src_l = float(ref_mean[0])
         src_a = float(ref_mean[1])
@@ -437,89 +624,75 @@ def calibrate_swapped_face_tone(
 
         x1, y1, x2, y2 = [int(v) for v in tgt_bbox]
         h, w = swapped_bgr.shape[:2]
-        bw, bh = x2 - x1, y2 - y1
+        bw, bh = max(1, x2 - x1), max(1, y2 - y1)
 
-        # Restrict color correction to skin so eyes, lips, hair and brows keep their scene colors.
-        mask = np.zeros((h, w), dtype=np.uint8)
-        pts = np.array([
-            [x1 - int(bw * 0.02), max(0, y1 - int(bh * 0.05))],
-            [x2 + int(bw * 0.02), max(0, y1 - int(bh * 0.05))],
-            [x2 + int(bw * 0.05), y1 + int(bh * 0.25)],
-            [x2 + int(bw * 0.05), y1 + int(bh * 0.60)],
-            [x2, y1 + int(bh * 0.85)],
-            [int(x1 + bw * 0.65), y2],
-            [int(x1 + bw * 0.35), y2],
-            [x1, y1 + int(bh * 0.85)],
-            [x1 - int(bw * 0.05), y1 + int(bh * 0.60)],
-            [x1 - int(bw * 0.05), y1 + int(bh * 0.25)],
-        ], dtype=np.int32)
-        cv2.fillPoly(mask, [pts], 1)
+        # Wide feathered ellipse (rx = 0.66 * bw, ry = 0.62 * bh) so ears are calibrated alongside face
+        cx = (x1 + x2) // 2
+        cy = (y1 + y2) // 2
+        rx = int(0.66 * bw)
+        ry = int(0.62 * bh)
+
+        mask = np.zeros((h, w), dtype=np.float32)
+        cv2.ellipse(mask, (cx, cy), (rx, ry), 0, 0, 360, 1.0, -1)
+        ksize = max(15, (int(bw * 0.12) // 2) * 2 + 1)
+        sigma = max(5.0, float(bw * 0.045))
+        mask = cv2.GaussianBlur(mask, (ksize, ksize), sigma)
+
+        # Smooth per-pixel YCrCb/HSV face_skin_gate (Cr in [132, 178], Cb in [75, 132], L >= 30)
         ycrcb = cv2.cvtColor(swapped_bgr, cv2.COLOR_BGR2YCrCb)
-        gray = cv2.cvtColor(swapped_bgr, cv2.COLOR_BGR2GRAY)
-        skin_pixels = (
-            (ycrcb[:, :, 1] >= 130) & (ycrcb[:, :, 1] <= 180) &
-            (ycrcb[:, :, 2] >= 75) & (ycrcb[:, :, 2] <= 135) &
-            (gray >= 12) & (gray <= 245)
-        )
-        mask = (mask > 0) & skin_pixels
-        if np.count_nonzero(mask) < 50:
-            print("[FaceEngine] Tone calibration skipped: insufficient confident facial skin pixels.")
-            return swapped_bgr
-        # A narrow feather softens only the skin-region boundary without tinting features.
-        feather_sigma = max(1.0, min(3.0, bw * 0.015))
-        mask = cv2.GaussianBlur(mask.astype(np.float32), (0, 0), feather_sigma)[:, :, np.newaxis]
-        mask *= skin_pixels[:, :, np.newaxis]
+        cr = ycrcb[:, :, 1]
+        cb = ycrcb[:, :, 2]
+        lum = cv2.cvtColor(swapped_bgr, cv2.COLOR_BGR2LAB)[:, :, 0]
+        face_skin_gate = ((cr >= 132) & (cr <= 178) & (cb >= 75) & (cb <= 132) & (lum >= 30)).astype(np.float32)
+        face_skin_gate = cv2.GaussianBlur(face_skin_gate, (15, 15), 0)
+        mask = (mask * face_skin_gate)[:, :, np.newaxis]
 
         swapped_lab = cv2.cvtColor(swapped_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
         calibrated_lab = swapped_lab.copy()
 
-        # Exact ground-truth melanin chrominance deltas (100% full precision)
-        da = float(np.clip(src_a - tgt_a, -18.0, 18.0))
-        db = float(np.clip(src_b - tgt_b, -18.0, 18.0))
+        # Exact ground-truth melanin chrominance deltas
+        da = src_a - tgt_a
+        db = src_b - tgt_b
 
-        # Scene-lighting anchored luminance calibration:
-        # When ref_bgr is supplied (the authentic diffusion scene render), preserve the scene's
-        # 3D key/ambient lighting, directional highlights, and neck continuity, gently reflecting
-        # authentic melanin depth without plunging the face into a dark muddy hole or blowing it out.
+        # Scene-lighting anchored luminance calibration
         if ref_bgr is not None:
             scene_mean, _ = extract_face_skin_profile(ref_bgr, tgt_bbox)
             scene_l = float(scene_mean[0])
             if ref_bgr is swapped_bgr or (ref_bgr.shape == swapped_bgr.shape and np.array_equal(ref_bgr, swapped_bgr)):
-                # Direct synthetic test harness case (e.g. test_inference.py Test 4 where target is passed as ref)
                 dL = src_l - tgt_l
             else:
-                # Keep most of the generated scene exposure while anchoring the
-                # face's base luminance to the reference complexion.
-                target_l = src_l + (scene_l - src_l) * 0.05
-                dL = target_l - tgt_l
+                ambient_delta = np.clip(scene_l - 138.0, -20.0, 20.0) * 0.10
+                target_l = np.clip(src_l + ambient_delta, 25.0, 245.0)
+                dL = (target_l - tgt_l) * 0.95
         else:
-            dL = float(np.clip(src_l - tgt_l, -15.0, 15.0))
-        dL = float(np.clip(dL, -30.0, 30.0))
+            dL = float(np.clip(src_l - tgt_l, -20.0, 20.0))
 
-        # Apply tone calibration strictly within facial mask
-        calibrated_lab[:, :, 0] += dL * mask[:, :, 0]
-        calibrated_lab[:, :, 1] += da * mask[:, :, 0]
-        calibrated_lab[:, :, 2] += db * mask[:, :, 0]
+        # Specular Highlight & Deep Shadow Protection
+        curr_l = swapped_lab[:, :, 0]
+        chroma = np.sqrt((swapped_lab[:, :, 1] - 128.0)**2 + (swapped_lab[:, :, 2] - 128.0)**2)
+        specular_mask = np.clip((curr_l - 195.0) / 45.0, 0.0, 1.0) * np.clip((24.0 - chroma) / 14.0, 0.0, 1.0)
+        specular_attenuation = np.clip((245.0 - curr_l) / 50.0, 0.15, 1.0) * (1.0 - 0.75 * specular_mask)
+        shadow_attenuation = np.clip((curr_l - 32.0) / 40.0, 0.20, 1.0)
+        tone_weight = specular_attenuation * shadow_attenuation
 
-        calibrated_lab[:, :, 0] = np.clip(calibrated_lab[:, :, 0], 0, 255)
-        calibrated_lab[:, :, 1] = np.clip(calibrated_lab[:, :, 1], 0, 255)
-        calibrated_lab[:, :, 2] = np.clip(calibrated_lab[:, :, 2], 0, 255)
+        # Soft chrominance standard deviation scaling
+        scale_a = float(np.clip(ref_std[1] / max(1.0, tgt_std[1]), 0.85, 1.15))
+        scale_b = float(np.clip(ref_std[2] / max(1.0, tgt_std[2]), 0.85, 1.15))
 
-        lab_std = calibrated_lab.copy()
-        lab_std[:, :, 0] *= 100.0 / 255.0
-        lab_std[:, :, 1:] -= 128.0
-        adjusted = cv2.cvtColor(lab_std, cv2.COLOR_LAB2BGR) * 255.0
-        result = swapped_bgr.copy()
-        support = mask[:, :, 0] > 0
-        result[support] = np.rint(np.clip(adjusted[support], 0, 255)).astype(np.uint8)
+        calibrated_lab[:, :, 0] += dL * mask[:, :, 0] * specular_attenuation
+        calibrated_lab[:, :, 1] += (da + (scale_a - 1.0) * (calibrated_lab[:, :, 1] - tgt_a)) * mask[:, :, 0] * tone_weight
+        calibrated_lab[:, :, 2] += (db + (scale_b - 1.0) * (calibrated_lab[:, :, 2] - tgt_b)) * mask[:, :, 0] * tone_weight
+
+        calibrated_bgr = cv2.cvtColor(np.clip(calibrated_lab, 0, 255).astype(np.uint8), cv2.COLOR_LAB2BGR)
+        result = (calibrated_bgr.astype(np.float32) * mask + swapped_bgr.astype(np.float32) * (1.0 - mask)).clip(0, 255).astype(np.uint8)
         return result
     except Exception as e:
-        print(f"[FaceEngine] Tone calibration warning: {e}")
+        print(f"[FaceEngine] Face tone calibration note: {e}")
         return swapped_bgr
 
 
 def restore_scene_hair(restored_bgr: np.ndarray, scene_bgr: np.ndarray, face_bbox: list) -> np.ndarray:
-    """Restore generated foreground hair without treating dark skin as hair."""
+    """Restore generated foreground hair without treating dark skin as hair (Bug B4)."""
     try:
         from core.clothing_engine import parse_clothing_labels
         scene = Image.fromarray(cv2.cvtColor(scene_bgr, cv2.COLOR_BGR2RGB))
@@ -527,33 +700,44 @@ def restore_scene_hair(restored_bgr: np.ndarray, scene_bgr: np.ndarray, face_bbo
     except Exception as error:
         print(f"[FaceEngine] Hair recovery skipped without segmentation: {error}")
         return restored_bgr
-    width = max(1.0, float(face_bbox[2] - face_bbox[0]))
-    # Exclude face skin (label 11) and facial skin chroma from hair restoration mask to prevent skin blotching
+
+    x1, y1, x2, y2 = [int(v) for v in face_bbox]
+    bw = max(1.0, float(x2 - x1))
+    bh = max(1.0, float(y2 - y1))
+    cx = (x1 + x2) / 2.0
+    cy = (y1 + y2) / 2.0
+    h_img, w_img = restored_bgr.shape[:2]
+
+    # Inner facial ellipse: rx = 0.36 * bw, ry = 0.38 * bh centered at (cx, cy + 0.04 * bh)
+    inner_face_oval = np.zeros((h_img, w_img), dtype=bool)
+    cv2.ellipse(
+        inner_face_oval.view(np.uint8),
+        (int(cx), int(cy + 0.04 * bh)),
+        (int(0.36 * bw), int(0.38 * bh)),
+        0, 0, 360, 1, -1
+    )
+
     ycrcb = cv2.cvtColor(restored_bgr, cv2.COLOR_BGR2YCrCb)
     cr, cb = ycrcb[:, :, 1], ycrcb[:, :, 2]
-    is_skin = (cr >= 130) & (cr <= 180) & (cb >= 75) & (cb <= 135)
+    is_skin = inner_face_oval & (cr >= 130) & (cr <= 180) & (cb >= 75) & (cb <= 135)
     is_face_seg = (labels == 11)
     hair_mask = (labels == 2) & ~(is_skin | is_face_seg)
 
-    alpha = feather_region(hair_mask, max(2.0, min(8.0, width*0.02)))[:, :, None]
-    blended = restored_bgr.astype(np.float32) * (1.0-alpha) + scene_bgr.astype(np.float32) * alpha
+    alpha = feather_region(hair_mask, max(2.0, min(8.0, bw * 0.02)))[:, :, None]
+    blended = restored_bgr.astype(np.float32) * (1.0 - alpha) + scene_bgr.astype(np.float32) * alpha
     return np.rint(np.clip(blended, 0, 255)).astype(np.uint8)
 
 
 def apply_face_lock(
     source_image: Image.Image,
     target_image: Image.Image,
-    fidelity_weight: float = 0.80,
+    fidelity_weight: float = 0.45,
     enable_pores: bool = False,
     enable_grain: bool = False,
     return_status: bool = False,
     src_faces: list = None
 ):
-    """Transfer identity, restore the face and retain scene lighting and semantic hair.
-
-    Source pore transfer and synthetic grain are optional and disabled by default;
-    they can amplify noise in low-quality references.
-    """
+    """Transfer identity, restore the face and retain scene lighting and semantic hair (Bugs B1, B3)."""
     app, swapper, codeformer_net, face_helper, fallback_restorer = get_face_modules()
 
     # Orientation safe conversion
@@ -568,87 +752,53 @@ def apply_face_lock(
     tgt_faces = detect_faces_robust(app, tgt_bgr)
 
     if not src_faces or not tgt_faces:
-        # If no face on target or source, return target with subtle film grain
         return (target_image, False) if return_status else target_image
 
-    # Select largest face by bounding box
     src_face = sorted(src_faces, key=lambda f: (f.bbox[2]-f.bbox[0])*(f.bbox[3]-f.bbox[1]), reverse=True)[0]
     tgt_face = sorted(tgt_faces, key=lambda f: (f.bbox[2]-f.bbox[0])*(f.bbox[3]-f.bbox[1]), reverse=True)[0]
 
-    # Extract source skin profile to inform melanin-adaptive CodeFormer fidelity
-    src_skin_profile, _ = extract_face_skin_profile(src_bgr, src_face.bbox)
-    src_l_val = float(src_skin_profile[0])
-
-    # Dynamic Head Roll Compensation for extreme pose tilts (Root Cause 4 Fix)
-    # Replaces full-canvas affine rotation with local bounding box crop (1.8x face box).
-    # The global canvas is NEVER rotated, completely preventing black triangular corner artifacts
-    # and preventing Cartesian coordinate gates from skewing.
-    roll_angle = float(tgt_face.pose[2]) if hasattr(tgt_face, "pose") and len(tgt_face.pose) > 2 else 0.0
-    needs_rotation = abs(roll_angle) > 15.0
-
-    h_canvas, w_canvas = tgt_bgr.shape[:2]
-    patch_crop_applied = False
-    M_crop = None
-    M_inv = None
-    crop_size = 0
-
-    if needs_rotation:
-        try:
-            fcx = float((tgt_face.bbox[0] + tgt_face.bbox[2]) / 2.0)
-            fcy = float((tgt_face.bbox[1] + tgt_face.bbox[3]) / 2.0)
-            bw_r = float(tgt_face.bbox[2] - tgt_face.bbox[0])
-            bh_r = float(tgt_face.bbox[3] - tgt_face.bbox[1])
-            crop_size = max(160, int(round(max(bw_r, bh_r) * 1.8)) | 1)
-
-            # Local rotation affine mapping: canvas (fcx, fcy) -> patch center (crop_size / 2, crop_size / 2)
-            M_rot = cv2.getRotationMatrix2D((fcx, fcy), roll_angle, 1.0)
-            M_crop = M_rot.copy()
-            M_crop[0, 2] += (crop_size / 2.0) - fcx
-            M_crop[1, 2] += (crop_size / 2.0) - fcy
-            M_inv = cv2.invertAffineTransform(M_crop)
-
-            upright_patch = cv2.warpAffine(
-                tgt_bgr, M_crop, (crop_size, crop_size),
-                flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT_101
-            )
-            upright_faces = detect_faces_robust(app, upright_patch)
-            if upright_faces:
-                tgt_face_for_swap = sorted(upright_faces, key=lambda f: (f.bbox[2]-f.bbox[0])*(f.bbox[3]-f.bbox[1]), reverse=True)[0]
-                tgt_bgr_for_swap = upright_patch
-                patch_crop_applied = True
-            else:
-                tgt_face_for_swap = tgt_face
-                tgt_bgr_for_swap = tgt_bgr.copy()
-                needs_rotation = False
-        except Exception as e:
-            print(f"[FaceEngine] Local head-roll crop warning: {e}")
-            tgt_face_for_swap = tgt_face
-            tgt_bgr_for_swap = tgt_bgr.copy()
-            needs_rotation = False
-    else:
-        tgt_face_for_swap = tgt_face
-        tgt_bgr_for_swap = tgt_bgr.copy()
+    # Native direct swap without artificial head-roll patch rotation (Bug B3)
+    tgt_face_for_swap = tgt_face
+    tgt_bgr_for_swap = tgt_bgr.copy()
 
     fx1, fy1, fx2, fy2 = [int(v) for v in tgt_face_for_swap.bbox]
     fh_w, fh_h = fx2 - fx1, fy2 - fy1
 
-    # Step 1: Transfer Biometric Facial Identity using Inswapper (native Poisson blending)
-    swapped_bgr = swapper.get(tgt_bgr_for_swap.copy(), tgt_face_for_swap, src_face, paste_back=True)
+    # Step 1: Transfer Biometric Facial Identity using Inswapper with crop-safe boundary warp (Bug B1)
+    bgr_fake, M = swapper.get(tgt_bgr_for_swap.copy(), tgt_face_for_swap, src_face, paste_back=False)
 
-    # Step 2: CodeFormer Discrete Codebook Prior with balanced fidelity (w=0.82 prevents plastic airbrushing)
+    lmks = getattr(tgt_face_for_swap, 'landmark_2d_106', None)
+    if lmks is None and hasattr(tgt_face_for_swap, 'landmark_3d_68') and tgt_face_for_swap.landmark_3d_68 is not None:
+        lmks = tgt_face_for_swap.landmark_3d_68[:, :2]
+    if lmks is None:
+        lmks = getattr(tgt_face_for_swap, 'kps', None)
+
+    if lmks is not None and len(lmks) >= 5:
+        face_blend_mask = get_clean_face_hull_mask(tgt_bgr_for_swap.shape, lmks, erode_ratio=0.08)
+    else:
+        face_blend_mask = None
+
+    swapped_bgr = warp_back_128(
+        bgr_fake=bgr_fake,
+        M=M,
+        target_bgr=tgt_bgr_for_swap,
+        hull_mask=face_blend_mask,
+        bbox=tgt_face_for_swap.bbox
+    )
+
+    # Step 2: CodeFormer Discrete Codebook Prior with balanced fidelity
     restored_bgr = swapped_bgr
-    # Favor fidelity to the swapped face to reduce over-restoration and preserve natural skin detail.
     is_small_face = fh_h < 150
-    effective_fidelity = max(0.55, min(0.90, float(fidelity_weight)))
+    effective_fidelity = min(0.50, max(0.20, float(fidelity_weight)))
     if is_small_face:
-        effective_fidelity = min(0.90, effective_fidelity + 0.05)
+        effective_fidelity = min(0.50, effective_fidelity + 0.05)
+
     if codeformer_net is not None and face_helper is not None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         try:
             from torchvision.transforms.functional import normalize
             from codeformer.basicsr.utils import img2tensor, tensor2img
 
-            # On-Demand CUDA Hydration
             codeformer_net.to(device)
             if hasattr(face_helper, "face_detector") and face_helper.face_detector is not None:
                 face_helper.face_detector.to(device)
@@ -674,39 +824,30 @@ def apply_face_lock(
                 face_helper.get_inverse_affine(None)
                 restored_bgr = face_helper.paste_faces_to_input_image()
 
-                # Mandibular Jawline Clamping for CodeFormer:
-                # CodeFormer's 512x512 crop extends below the chin into the submental neck.
-                # Because CodeFormer has no facial landmark priors for neck dermal relief,
-                # it airbrushes/smooths the throat. FaceHelper's 101px blur then smears this onto the neck.
-                # We clamp CodeFormer strictly at the chin line (ty2) so any throat pixels below ty2
-                # retain the crisp, authentic diffusion texture from swapped_bgr.
-                tx1, ty1, tx2, ty2 = [int(v) for v in tgt_face_for_swap.bbox]
-                th_f = ty2 - ty1
-                tw_f = tx2 - tx1
-                chin_y = ty2
-                if chin_y < restored_bgr.shape[0] - 5:
-                    fade_start = chin_y
-                    fade_end = min(restored_bgr.shape[0], int(chin_y + th_f * 0.15))
-                    if fade_end > fade_start:
-                        yy = np.arange(restored_bgr.shape[0])[:, None].astype(np.float32)
-                        t = np.clip((yy - fade_start) / float(fade_end - fade_start), 0.0, 1.0)
-                        # C^1 continuous cosine easing: zero derivative at start and end eliminates horizontal banding
-                        v_alpha = 0.5 * (1.0 + np.cos(np.pi * t))
-                        col_x1 = max(0, int(tx1 - tw_f * 0.18))
-                        col_x2 = min(restored_bgr.shape[1], int(tx2 + tw_f * 0.18))
-                        h_weight = np.zeros((1, restored_bgr.shape[1]), dtype=np.float32)
-                        h_weight[0, col_x1:col_x2] = 1.0
-                        h_weight = cv2.GaussianBlur(h_weight, (45, 1), 13.0)
-                        cf_weight = (1.0 - (1.0 - v_alpha) * h_weight)[:, :, np.newaxis]
-                        # Blend strictly below chin with authentic sharp diffusion target, NOT blurry Inswapper
-                        restored_bgr = (restored_bgr.astype(np.float32) * cf_weight + tgt_bgr_for_swap.astype(np.float32) * (1.0 - cf_weight)).clip(0, 255).astype(np.uint8)
+                # Seamless face blend with landmark convex hull feathering
+                if face_blend_mask is None:
+                    if lmks is not None and len(lmks) >= 5:
+                        face_blend_mask = get_clean_face_hull_mask(restored_bgr.shape, lmks, erode_ratio=0.08)
+                    else:
+                        tx1, ty1, tx2, ty2 = [int(v) for v in tgt_face_for_swap.bbox]
+                        tw_f = max(1, tx2 - tx1)
+                        th_f = max(1, ty2 - ty1)
+                        face_blend_mask = np.zeros((restored_bgr.shape[0], restored_bgr.shape[1]), dtype=np.uint8)
+                        fcx = int((tx1 + tx2) / 2)
+                        fcy = int((ty1 + ty2) / 2)
+                        cv2.ellipse(face_blend_mask, (fcx, fcy), (int(tw_f * 0.48), int(th_f * 0.52)), 0, 0, 360, 255, -1)
+
+                restored_bgr = seamless_face_blend(
+                    swapped_face_bgr=restored_bgr,
+                    body_scene_bgr=tgt_bgr_for_swap,
+                    face_mask=face_blend_mask
+                )
             else:
                 restored_bgr = swapped_bgr
         except Exception as e:
             print(f"[FaceEngine] CodeFormer restoration warning: {e}")
             restored_bgr = swapped_bgr
         finally:
-            # On-Demand CUDA Eviction: Return CodeFormer and FaceHelper to CPU and flush VRAM
             try:
                 codeformer_net.to("cpu")
                 if hasattr(face_helper, "face_detector") and face_helper.face_detector is not None:
@@ -732,20 +873,24 @@ def apply_face_lock(
             print(f"[FaceEngine] GFPGAN fallback warning: {e}")
             restored_bgr = swapped_bgr
 
-    # Step 3: Definitive Ground-Truth Tone Calibration (in face alignment space)
-    # Locks the final face melanin, luminance, and biological undertones 100% to the user's authentic reference
+    # Step 3: Definitive Ground-Truth Tone Calibration
+    tgt_lmks_tone = getattr(tgt_face_for_swap, 'landmark_2d_106', None)
+    if tgt_lmks_tone is None and hasattr(tgt_face_for_swap, 'landmark_3d_68') and tgt_face_for_swap.landmark_3d_68 is not None:
+        tgt_lmks_tone = tgt_face_for_swap.landmark_3d_68[:, :2]
     restored_bgr = calibrate_swapped_face_tone(
         swapped_bgr=restored_bgr,
         src_bgr=src_bgr,
         tgt_bbox=tgt_face_for_swap.bbox,
         src_bbox=src_face.bbox,
-        ref_bgr=tgt_bgr_for_swap
+        ref_bgr=tgt_bgr_for_swap,
+        src_kps=getattr(src_face, "kps", None),
+        tgt_kps=getattr(tgt_face_for_swap, "kps", None),
+        tgt_lmks=tgt_lmks_tone
     )
 
     # Step 3.5: Dual-Source DSLR micro-pores & epidermal texture recovery on tone-stabilized face
     if enable_pores:
         try:
-            # Measure body skin texture variance from neck/chest to dynamically bridge face texture
             x1_t, y1_t, x2_t, y2_t = [int(v) for v in tgt_face_for_swap.bbox]
             bw_t, bh_t = x2_t - x1_t, y2_t - y1_t
             h_curr, w_curr = tgt_bgr_for_swap.shape[:2]
@@ -770,32 +915,18 @@ def apply_face_lock(
                 bbox=tgt_face_for_swap.bbox,
                 src_bgr=src_bgr,
                 src_bbox=src_face.bbox,
+                src_kps=getattr(src_face, "kps", None),
+                tgt_kps=getattr(tgt_face_for_swap, "kps", None),
                 pore_strength=1.0,
                 body_var=body_var
             )
         except Exception as e:
             print(f"[FaceEngine] Micro-texture enhancement warning: {e}")
 
-    # Step 2.4: Inverse Head Roll Rotation to restore dynamic pose angle (Root Cause 4 Fix)
-    if patch_crop_applied and M_inv is not None:
-        # Elliptical feathered blend mask in patch space
-        patch_mask = np.zeros((crop_size, crop_size), dtype=np.float32)
-        cp = (int(crop_size / 2.0), int(crop_size / 2.0))
-        axes = (int(crop_size * 0.44), int(crop_size * 0.44))
-        cv2.ellipse(patch_mask, cp, axes, 0, 0, 360, 1.0, -1)
-        patch_mask = cv2.GaussianBlur(patch_mask, (31, 31), 9.0)
-
-        warped_restored = cv2.warpAffine(restored_bgr, M_inv, (w_canvas, h_canvas), flags=cv2.INTER_LANCZOS4)
-        warped_mask = cv2.warpAffine(patch_mask, M_inv, (w_canvas, h_canvas), flags=cv2.INTER_LANCZOS4)[:, :, np.newaxis]
-        # Blend restored upright face back into unrotated canvas - global canvas is 100% preserved with zero black borders
-        restored_bgr = (tgt_bgr.astype(np.float32) * (1.0 - warped_mask) + warped_restored.astype(np.float32) * warped_mask).clip(0, 255).astype(np.uint8)
-
-    # Restore only semantic foreground hair after all face-space adjustments.
-    # This operates in canvas coordinates and has no rectangular crop boundary.
+    # Restore semantic foreground hair
     restored_bgr = restore_scene_hair(restored_bgr, tgt_bgr, tgt_face.bbox)
 
-    # Step 3.8: Targeted Sensory Landmark Clarity & Acutance Enhancement
-    # Delivers razor-sharp eyes, lashes, pupils, irises, and lip vermilion definition
+    # Step 3.8: Targeted Sensory Landmark Clarity
     restored_bgr = enhance_facial_clarity(restored_bgr, tgt_face.bbox, kps=getattr(tgt_face, "kps", None))
 
     # Step 4: Photographic 35mm Micro-Grain
@@ -810,3 +941,4 @@ def apply_face_lock(
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     return (res_img, True) if return_status else res_img
+

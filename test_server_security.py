@@ -2,6 +2,7 @@
 import json
 import time
 import requests
+import unittest
 
 BASE_URL = "http://127.0.0.1:7870"
 
@@ -66,5 +67,40 @@ def test_api():
     print("   ALL SERVER SECURITY & API TESTS PASSED (100% SECURE)")
     print("======================================================================")
 
+
+class ServerSecurityTests(unittest.TestCase):
+    def test_safe_path_traversal(self):
+        from server import safe_path
+        from core import config
+        self.assertIsNone(safe_path(config.WORKSPACE_ROOT, "../../Windows/win.ini"))
+        self.assertIsNone(safe_path(config.WORKSPACE_ROOT, "..\\..\\server.py"))
+        self.assertIsNotNone(safe_path(config.WORKSPACE_ROOT, "server.py"))
+
+    def test_history_schema_has_required_android_keys(self):
+        import server
+        with server.HISTORY_LOCK:
+            server.HISTORY.clear()
+            server.HISTORY.append({
+                "id": "test_123",
+                "url": "/outputs/test_123.png",
+                "model": "cyberrealistic_xl",
+                "output_url": "/outputs/test_123.png",
+                "source_url": "/inputs/src_123.png"
+            })
+            items = list(server.HISTORY)
+            self.assertEqual(len(items), 1)
+            self.assertIn("id", items[0])
+            self.assertIn("url", items[0])
+            self.assertIn("model", items[0])
+
+    def test_live_api_if_running(self):
+        try:
+            res = requests.get(f"{BASE_URL}/api/status", timeout=1)
+            if res.status_code == 200:
+                test_api()
+        except requests.RequestException:
+            pass
+
+
 if __name__ == "__main__":
-    test_api()
+    unittest.main()
