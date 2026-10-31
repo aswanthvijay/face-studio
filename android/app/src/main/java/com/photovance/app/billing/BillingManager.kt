@@ -24,6 +24,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import java.security.MessageDigest
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 
 enum class VipPlan(val id: String, val title: String, val price: String, val billingPeriod: String, val badge: String?) {
     WEEKLY("vip_weekly", "Weekly Access", "$4.99", "/ week · 3-day trial when eligible", null),
@@ -137,7 +139,7 @@ class BillingManager(context: Context) : BillingClientStateListener, PurchasesUp
                     finishPurchase(false, "Could not load subscription details: ${result.debugMessage}")
                     return@queryProductDetailsAsync
                 }
-                val product = details.productDetailsList.firstOrNull()
+                val product = details.firstOrNull()
                 val offers = product?.subscriptionOfferDetails.orEmpty()
                 val offerToken = offers.firstOrNull { offer ->
                     plan == VipPlan.WEEKLY && offer.pricingPhases.pricingPhaseList.any { phase ->
@@ -214,7 +216,7 @@ class BillingManager(context: Context) : BillingClientStateListener, PurchasesUp
             QueryProductDetailsParams.newBuilder().setProductList(products).build()
         ) { result, details ->
             if (result.responseCode == BillingClient.BillingResponseCode.OK) {
-                _productDetails.value = details.productDetailsList.associateBy { it.productId }
+                _productDetails.value = details.associateBy { it.productId }
             } else {
                 _message.value = "Could not load subscription prices: ${result.debugMessage}"
             }
@@ -258,11 +260,15 @@ class BillingManager(context: Context) : BillingClientStateListener, PurchasesUp
                 return false
             }
             if (!purchase.isAcknowledged) {
-                val ack = billingClient.acknowledgePurchase(
-                    AcknowledgePurchaseParams.newBuilder()
-                        .setPurchaseToken(purchase.purchaseToken)
-                        .build()
-                ).await()
+                val ack = suspendCancellableCoroutine { continuation ->
+                    billingClient.acknowledgePurchase(
+                        AcknowledgePurchaseParams.newBuilder()
+                            .setPurchaseToken(purchase.purchaseToken)
+                            .build()
+                    ) { result ->
+                        if (continuation.isActive) continuation.resume(result)
+                    }
+                }
                 if (ack.responseCode != BillingClient.BillingResponseCode.OK) {
                     if (reportResult) finishPurchase(false, "Purchase verified, but acknowledgement failed: ${ack.debugMessage}")
                     return false

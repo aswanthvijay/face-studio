@@ -41,7 +41,7 @@ fun PhotovanceApp(studio: StudioViewModel) {
                 studio.goToStep(studio.step - 1)
             } else if (linkAccount) {
                 linkAccount = false
-            } else if (currentUser != null && !currentUser.isGuest) {
+            } else if (currentUser?.isGuest == false) {
                 studio.authRepository.signOut()
             }
         }

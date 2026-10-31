@@ -99,7 +99,7 @@ fun SettingsSheet(studio: StudioViewModel, appearance: AppAppearance,
                             Text("Create or link an account")
                         }
                     }
-                    if (currentUser != null && !currentUser.isGuest) {
+                    if (currentUser?.isGuest == false) {
                         OutlinedButton(onClick = { studio.authRepository.signOut(); onDismiss() },
                             modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
                             Text("Sign out of Photovance")
