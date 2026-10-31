@@ -90,7 +90,7 @@ D:\face_studio\run.bat
 ```
 The Web Studio opens automatically at `http://127.0.0.1:7870`.
 
-For Android on the same Wi-Fi, run `C:\Users\Aswanth Vijay\Documents\antigravity\wise-planck\start_ai_for_android.bat`. It starts both studios and forwards the PC's LAN address to their loopback listeners, which the bundled offline Python runtime requires. Use the printed `http://<PC-LAN-IP>:7870/` in the Android app's Settings. The old `10.0.2.2` default is for an emulator, not a physical phone. Existing installations can update Settings without reinstalling.
+The Android client currently reconnects to a saved HTTPS studio URL or accepts a manually entered HTTPS endpoint in Settings. It no longer defaults to a hard-coded LAN address or permits cleartext connections to LAN hosts. Automatic Windows discovery and secure one-time pairing are not available yet; do not expose the unauthenticated local inference server directly to a Wi-Fi network. See `android\PLAY_STORE_GUIDE.md` for Firebase, Play Billing, and release setup.
 
 ### 2. Verify Core AI Modules
 Run the automated test suite:

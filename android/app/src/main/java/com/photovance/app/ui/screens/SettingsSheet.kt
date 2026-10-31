@@ -1,5 +1,10 @@
 package com.photovance.app.ui.screens
 
+import android.app.Activity
+import android.app.Activity.RESULT_OK
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -14,19 +19,38 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.photovance.app.network.ApiClient
 import com.photovance.app.ui.StudioViewModel
+import com.photovance.app.update.AndroidUpdateManager
+import com.photovance.app.update.UpdateCheckResult
+import com.photovance.app.update.UpdateOffer
 import com.photovance.app.ui.components.StudioButton
 import com.photovance.app.ui.theme.AppAppearance
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsSheet(studio: StudioViewModel, appearance: AppAppearance,
-    onAppearance: (AppAppearance) -> Unit, onDismiss: () -> Unit) {
+    onAppearance: (AppAppearance) -> Unit, onDismiss: () -> Unit, onLinkAccount: () -> Unit) {
     var address by remember { mutableStateOf(ApiClient.baseUrl) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val activity = context as? Activity
+    val updateManager = remember(context) { AndroidUpdateManager(context) }
+    var updateOffer by remember { mutableStateOf<UpdateOffer?>(null) }
+    var updateMessage by remember { mutableStateOf<String?>(null) }
+    var checkingUpdates by remember { mutableStateOf(false) }
+    var confirmAccountDeletion by remember { mutableStateOf(false) }
+    var accountDeletionError by remember { mutableStateOf<String?>(null) }
+    val updateLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode != RESULT_OK) updateMessage = "The update was canceled."
+    }
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet,
         containerColor = MaterialTheme.colorScheme.surface) {
@@ -67,13 +91,31 @@ fun SettingsSheet(studio: StudioViewModel, appearance: AppAppearance,
                         style = MaterialTheme.typography.titleMedium)
                     Text(if (currentUser?.isGuest == true) "Exploring studio without account" else (currentUser?.email ?: currentUser?.phoneNumber ?: "Authenticated session"),
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (currentUser != null) {
+                    if (currentUser?.isGuest == true) {
+                        Text("Link an account to keep access to this guest profile on other devices.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        OutlinedButton(onClick = onLinkAccount, modifier = Modifier.fillMaxWidth()) {
+                            Text("Create or link an account")
+                        }
+                    }
+                    if (currentUser != null && !currentUser.isGuest) {
                         OutlinedButton(onClick = { studio.authRepository.signOut(); onDismiss() },
                             modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
                             Text("Sign out of Photovance")
                         }
                     }
+                    if (currentUser != null) {
+                        TextButton(onClick = { confirmAccountDeletion = true },
+                            modifier = Modifier.fillMaxWidth()) {
+                            Text("Delete account", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
                 }
+            }
+            accountDeletionError?.let {
+                Text(it, color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall)
             }
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -142,7 +184,88 @@ fun SettingsSheet(studio: StudioViewModel, appearance: AppAppearance,
                 modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium, enabled = !studio.isGenerating)
             Text("Photovance · Pro Photo Studio", style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Text("App updates", style = MaterialTheme.typography.titleLarge)
+            Text("Updates use Google Play for Play Store installs and the official signed APK for sideloaded installs.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+            StudioButton(
+                text = when (updateOffer) {
+                    is UpdateOffer.PlayStore -> "Update now"
+                    is UpdateOffer.Sideloaded -> "Download update"
+                    null -> "Check for updates"
+                },
+                onClick = {
+                    when (val offer = updateOffer) {
+                        is UpdateOffer.PlayStore -> {
+                            if (activity == null) updateMessage = "Open Photovance on your Android device to install updates."
+                            else {
+                                val started = updateManager.startPlayUpdate(activity, offer, updateLauncher)
+                                if (!started) updateMessage = "Google Play could not start the update. Try again later."
+                            }
+                        }
+                        is UpdateOffer.Sideloaded -> {
+                            updateManager.openApkDownload(context, offer)
+                            updateMessage = "The signed APK download was opened in your browser."
+                        }
+                        null -> {
+                            checkingUpdates = true
+                            updateManager.checkForUpdate { result ->
+                                scope.launch {
+                                    checkingUpdates = false
+                                    when (result) {
+                                        is UpdateCheckResult.Available -> {
+                                            updateOffer = result.offer
+                                            updateMessage = when (val available = result.offer) {
+                                                is UpdateOffer.PlayStore -> "An update is available in Google Play."
+                                                is UpdateOffer.Sideloaded -> "Version ${available.version} is available."
+                                            }
+                                        }
+                                        UpdateCheckResult.UpToDate -> {
+                                            updateOffer = null
+                                            updateMessage = "Photovance is up to date."
+                                        }
+                                        is UpdateCheckResult.Failed -> updateMessage = result.message
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                enabled = !checkingUpdates,
+                loading = checkingUpdates
+            )
+            updateMessage?.let {
+                Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall)
+            }
             TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("Done") }
         }
+    }
+    if (confirmAccountDeletion) {
+        AlertDialog(
+            onDismissRequest = { confirmAccountDeletion = false },
+            title = { Text("Delete your account?") },
+            text = {
+                Text("This permanently removes your Photovance account and its subscription verification records. Photos already sent to a studio server follow that server's retention policy.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmAccountDeletion = false
+                    studio.authRepository.deleteAccount { success, result ->
+                        if (success) {
+                            studio.message = result
+                            onDismiss()
+                        } else {
+                            accountDeletionError = result ?: "Could not delete the account."
+                        }
+                    }
+                }) {
+                    Text("Delete account", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmAccountDeletion = false }) { Text("Cancel") }
+            }
+        )
     }
 }

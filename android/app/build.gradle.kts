@@ -5,6 +5,10 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
 val releaseSigning = Properties().apply {
     val propertiesFile = rootProject.file("signing.properties")
     if (propertiesFile.exists()) propertiesFile.inputStream().use { load(it) }
@@ -15,14 +19,17 @@ fun signingValue(name: String, environment: String): String? =
 
 android {
     namespace = "com.photovance.app"
-    compileSdk = 34
+    compileSdk = 35
+
+    val appVersionCode = providers.gradleProperty("androidVersionCode").orElse("1").get().toInt()
+    val appVersionName = providers.gradleProperty("androidVersionName").orElse("1.0.0").get()
 
     defaultConfig {
         applicationId = "com.photovance.app"
         minSdk = 26
-        targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        targetSdk = 35
+        versionCode = appVersionCode
+        versionName = appVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -95,6 +102,15 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.0")
+    implementation(platform("com.google.firebase:firebase-bom:33.1.2"))
+    implementation("com.google.firebase:firebase-auth")
+    implementation("com.google.firebase:firebase-functions")
+    implementation("androidx.credentials:credentials:1.3.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
+    implementation("com.android.billingclient:billing-ktx:7.0.0")
+    implementation("com.google.android.play:app-update-ktx:2.1.0")
     implementation("com.google.android.gms:play-services-ads:23.0.0")
     implementation("com.google.android.play:review-ktx:2.0.1")
     testImplementation("junit:junit:4.13.2")

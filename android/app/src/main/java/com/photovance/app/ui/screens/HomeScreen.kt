@@ -1,5 +1,6 @@
 package com.photovance.app.ui.screens
 
+import android.app.Activity
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
@@ -57,10 +58,20 @@ fun HomeScreen(studio: StudioViewModel, onSettings: () -> Unit) {
     }
 
     if (studio.showPaywall) {
+        val products by studio.billingManager.productDetails.collectAsState()
+        val prices = products.mapValues { (_, product) ->
+            product.subscriptionOfferDetails?.firstOrNull()
+                ?.pricingPhases?.pricingPhaseList?.lastOrNull()?.formattedPrice
+        }
         PaywallSheet(
             onDismiss = studio::dismissPaywall,
-            onSubscribe = studio::subscribeVip,
-            onRestore = studio::restorePurchases
+            onSubscribe = { plan ->
+                val activity = context as? Activity
+                if (activity == null) studio.message = "Open Google Play on this device to subscribe."
+                else studio.subscribeVip(activity, plan)
+            },
+            onRestore = studio::restorePurchases,
+            prices = prices
         )
     }
 

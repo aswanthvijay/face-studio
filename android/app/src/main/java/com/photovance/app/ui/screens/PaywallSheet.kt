@@ -32,7 +32,8 @@ import com.photovance.app.ui.components.StudioButton
 fun PaywallSheet(
     onDismiss: () -> Unit,
     onSubscribe: (VipPlan) -> Unit,
-    onRestore: () -> Unit
+    onRestore: () -> Unit,
+    prices: Map<String, String?> = emptyMap()
 ) {
     var selectedPlan by remember { mutableStateOf(VipPlan.YEARLY) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -154,22 +155,23 @@ fun PaywallSheet(
                 VipPlanCard(
                     plan = VipPlan.YEARLY,
                     isSelected = selectedPlan == VipPlan.YEARLY,
-                    onSelect = { selectedPlan = VipPlan.YEARLY }
+                    onSelect = { selectedPlan = VipPlan.YEARLY },
+                    price = prices[VipPlan.YEARLY.id]
                 )
 
                 VipPlanCard(
                     plan = VipPlan.WEEKLY,
                     isSelected = selectedPlan == VipPlan.WEEKLY,
-                    onSelect = { selectedPlan = VipPlan.WEEKLY }
+                    onSelect = { selectedPlan = VipPlan.WEEKLY },
+                    price = prices[VipPlan.WEEKLY.id]
                 )
             }
 
             Spacer(Modifier.height(24.dp))
 
             // CTA Button
-            val ctaText = if (selectedPlan == VipPlan.WEEKLY) "Start 3-Day Free Trial" else "Unlock Annual VIP Studio"
             StudioButton(
-                text = ctaText,
+                text = "Continue to Google Play",
                 onClick = { onSubscribe(selectedPlan) },
                 icon = Icons.Default.Stars,
                 modifier = Modifier.fillMaxWidth()
@@ -238,7 +240,8 @@ private fun VipPerkItem(text: String) {
 private fun VipPlanCard(
     plan: VipPlan,
     isSelected: Boolean,
-    onSelect: () -> Unit
+    onSelect: () -> Unit,
+    price: String?
 ) {
     val borderColor = if (isSelected) Color(0xFFFFB800) else Color.White.copy(alpha = 0.12f)
     val bgColor = if (isSelected) Color(0xFF231C10) else Color.White.copy(alpha = 0.04f)
@@ -306,7 +309,7 @@ private fun VipPlanCard(
                     }
                 }
                 Text(
-                    text = "${plan.price} ${plan.billingPeriod}",
+                    text = "${price ?: plan.price} ${plan.billingPeriod}",
                     style = MaterialTheme.typography.bodySmall.copy(
                         color = Color.White.copy(alpha = 0.65f)
                     )

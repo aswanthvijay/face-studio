@@ -1,6 +1,7 @@
 package com.photovance.app
 
 import android.app.Application
+import android.app.Activity
 import android.content.Context
 import android.os.Looper
 import androidx.activity.ComponentActivity
@@ -18,6 +19,9 @@ import kotlinx.coroutines.cancel
 import com.google.gson.JsonParser
 import com.github.takahirom.roborazzi.captureRoboImage
 import com.photovance.app.network.ApiClient
+import com.photovance.app.auth.AuthRepository
+import com.photovance.app.auth.AuthState
+import com.photovance.app.auth.AuthUser
 import com.photovance.app.ui.PhotovanceApp
 import com.photovance.app.ui.StudioViewModel
 import com.photovance.app.ui.screens.HomeScreen
@@ -42,6 +46,8 @@ import org.robolectric.annotation.GraphicsMode
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], qualifiers = "w393dp-h851dp-xhdpi")
@@ -76,11 +82,13 @@ class StudioFlowTest {
         server.start()
         previousUrl = ApiClient.baseUrl
         ApiClient.baseUrl = server.url("/").toString()
-        compose.runOnUiThread { studio = StudioViewModel(app) }
+        compose.runOnUiThread { studio = StudioViewModel(app, TestAuthRepository()) }
     }
 
     @After fun tearDown() {
         compose.runOnUiThread { studio.viewModelScope.cancel() }
+        studio.authRepository.close()
+        studio.billingManager.close()
         server.shutdown()
         ApiClient.baseUrl = previousUrl
     }
@@ -117,7 +125,7 @@ class StudioFlowTest {
                 "100 percent original"))
     }
 
-    @Test fun lightThemeAndSignupRemainAvailableWithoutPretendingToAuthenticate() {
+    @Test fun authScreenKeepsSignupAndGuestAccessAvailable() {
         RuntimeEnvironment.getApplication().getSharedPreferences("studio_design", Context.MODE_PRIVATE)
             .edit().putString("appearance", "Light").commit()
         compose.setContent { PhotovanceApp(studio) }
@@ -128,14 +136,59 @@ class StudioFlowTest {
         capture("signup-light")
         compose.onNodeWithText("Create account", substring = false).performScrollTo().performClick()
         compose.onNodeWithText("Enter a valid email address").assertExists()
-        compose.onNodeWithText("Continue with Google").performScrollTo().performClick()
-        compose.onNodeWithText("Google sign-in is coming soon").assertIsDisplayed()
-        compose.onNode(hasText("Explore as a guest") and hasAnyAncestor(isDialog())).performClick()
+        compose.onNodeWithText("Continue with Google").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Explore as a guest").performScrollTo().performClick()
         compose.onNodeWithText("Start with your photo.").assertIsDisplayed()
         capture("photo-light")
         compose.onNodeWithText("Just exploring? Try a sample").performScrollTo().performClick()
         compose.onNodeWithText("Continue to styling").performClick()
         capture("style-light")
+    }
+
+    private class TestAuthRepository : AuthRepository {
+        private val mutableAuthState = MutableStateFlow<AuthState>(AuthState.Idle)
+        override val authState: StateFlow<AuthState> = mutableAuthState
+        private val mutableCurrentUser = MutableStateFlow<AuthUser?>(null)
+        override val currentUser: StateFlow<AuthUser?> = mutableCurrentUser
+
+        override suspend fun signInWithGoogle(activity: Activity): AuthUser =
+            throw UnsupportedOperationException("Google sign-in is not used by this test.")
+
+        override fun signInWithEmail(email: String, password: String, onResult: (Boolean, String?) -> Unit) =
+            onResult(false, "Not configured in test.")
+
+        override fun createEmailAccount(
+            name: String,
+            email: String,
+            password: String,
+            onResult: (Boolean, String?) -> Unit
+        ) = onResult(false, "Not configured in test.")
+
+        override fun sendPasswordReset(email: String, onResult: (Boolean, String?) -> Unit) =
+            onResult(false, "Not configured in test.")
+
+        override fun sendPhoneOtp(phoneNumber: String, activity: Activity, onResult: (Boolean, String?) -> Unit) =
+            onResult(false, "Not configured in test.")
+
+        override fun verifyPhoneOtp(verificationId: String, code: String, onResult: (Boolean, String?) -> Unit) =
+            onResult(false, "Not configured in test.")
+
+        override fun signInAsGuest(onResult: (Boolean, String?) -> Unit) {
+            val guest = AuthUser("test-guest", displayName = "Guest Creator", isGuest = true)
+            mutableCurrentUser.value = guest
+            mutableAuthState.value = AuthState.Authenticated(guest)
+            onResult(true, null)
+        }
+
+        override fun signOut() {
+            mutableCurrentUser.value = null
+            mutableAuthState.value = AuthState.Idle
+        }
+
+        override fun deleteAccount(onResult: (Boolean, String?) -> Unit) =
+            onResult(false, "Not configured in test.")
+
+        override fun close() = Unit
     }
 
     @Test fun generationFailureKeepsPhotoPromptAndAllowsRetry() {
@@ -204,4 +257,3 @@ class StudioFlowTest {
 
     private fun json(body: String) = MockResponse().setHeader("Content-Type", "application/json").setBody(body)
 }
-
