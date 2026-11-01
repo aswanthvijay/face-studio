@@ -45,8 +45,10 @@ data class Creation(
 
 class StudioViewModel(
     application: Application,
-    authRepositoryOverride: AuthRepository? = null
+    authRepositoryOverride: AuthRepository?
 ) : AndroidViewModel(application) {
+    constructor(application: Application) : this(application, null)
+
     val authRepository: AuthRepository = authRepositoryOverride ?: PhotovanceAuthRepository(application)
     val hybridRouter: HybridStudioRouter = HybridStudioRouter(application)
     val billingManager: BillingManager = BillingManager(application)

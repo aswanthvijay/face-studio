@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.ViewModelProvider
 import kotlinx.coroutines.cancel
 import com.google.gson.JsonParser
 import com.github.takahirom.roborazzi.captureRoboImage
@@ -123,6 +124,14 @@ class StudioFlowTest {
         compose.onNodeWithContentDescription("Before and after photo comparison")
             .assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.StateDescription,
                 "100 percent original"))
+    }
+
+    @Test fun androidViewModelFactoryCanCreateStudioViewModel() {
+        val viewModel = AtomicReference<StudioViewModel>()
+        compose.runOnUiThread {
+            viewModel.set(ViewModelProvider(compose.activity)[StudioViewModel::class.java])
+        }
+        assertNotNull(viewModel.get())
     }
 
     @Test fun authScreenKeepsSignupAndGuestAccessAvailable() {
