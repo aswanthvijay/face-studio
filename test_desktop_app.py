@@ -296,7 +296,7 @@ class WindowsPackagingTests(unittest.TestCase):
 
     def test_release_workflow_versions_exceed_manually_built_1_0_releases(self):
         source = (Path(__file__).parent / ".github" / "workflows" / "windows-desktop-release.yml")
-        self.assertIn("APP_VERSION: 1.1.${{ github.run_number }}", source.read_text(encoding="utf-8"))
+        self.assertIn("APP_VERSION: 1.2.${{ github.run_number }}", source.read_text(encoding="utf-8"))
 
     def test_installer_is_per_user_and_creates_shortcuts(self):
         source = (Path(__file__).parent / "windows_installer.iss").read_text(encoding="utf-8")

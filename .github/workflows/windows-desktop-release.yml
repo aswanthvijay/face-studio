@@ -16,7 +16,7 @@ jobs:
   build-and-publish:
     runs-on: windows-latest
     env:
-      APP_VERSION: 1.1.${{ github.run_number }}
+      APP_VERSION: 1.2.${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -67,9 +67,18 @@ jobs:
         with:
           tag_name: desktop-v${{ env.APP_VERSION }}
           name: Face Studio Windows v${{ env.APP_VERSION }}
-          prerelease: true
-          make_latest: false
+          prerelease: false
+          make_latest: true
           generate_release_notes: true
+          body: |
+            ## Face Studio Windows v${{ env.APP_VERSION }} — Major Engine & Biometric Update
+
+            ### What's New
+            - **Biometric Face Engine**: Flawless 3/4-pose cheek blending (`BORDER_CONSTANT`), pose-aligned skin micro-pores, robust tilted-head detection, and speckle-free scene hair restoration.
+            - **Dermal Skin Precision**: Lateral ear skin harmonization, continuous soft-skin chrominance gating, and robust tone calibration.
+            - **Thread Safety & Multi-Threading**: Concurrency locks across face detector, CodeFormer, ClipSeg parser, and ComfyUI pipeline.
+            - **VRAM & Cache Hygiene**: Memory leak remediation and automated temporary file pruning.
+            - **UI & Error Reporting**: Detailed quality-guard diagnostics on HTTP 422 and custom negative prompt support.
           files: |
             dist/installer/FaceStudio-Setup.exe
             dist/installer/FaceStudio-Setup.exe.sha256

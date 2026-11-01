@@ -371,8 +371,14 @@
           request_id: requestId
         })
       });
-      const result = await response.json();
-      if (!response.ok || !result.success) throw new Error(result.error || "Image generation failed.");
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) {
+        let errMsg = result.error || "Image generation failed.";
+        if (response.status === 422 && Array.isArray(result.failure_reasons) && result.failure_reasons.length > 0) {
+          errMsg = `Generation halted by quality guard:\n• ${result.failure_reasons.join('\n• ')}`;
+        }
+        throw new Error(errMsg);
+      }
       delete pending.pending;
       const resultUrls = (result.results?.length ? result.results : [result.output_url])
         .filter((url) => typeof url === "string" && url);
